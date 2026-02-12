@@ -1,0 +1,109 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  profile       Profile?
+  refreshTokens RefreshToken[]
+  companies     Member[]
+}
+
+model RefreshToken {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+
+  tokenHash   String   @unique
+  createdAt   DateTime @default(now())
+  expiresAt   DateTime
+  revokedAt   DateTime?
+  replacedByTokenId String?
+
+  userAgent   String?
+  ipAddress   String?
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+
+model Profile {
+  id            String   @id @default(cuid())
+  userId        String   @unique
+  user          User     @relation(fields: [userId], references: [id])
+
+  firstName     String
+  lastName      String
+  username      String   @unique
+  zipcode       String   // store as String, zipcodes can have leading zeros
+  avatarUrl     String?
+
+  tier          MembershipTier @default(COPPER)
+  starsBalance  Int      @default(0)
+
+  ratingAvg     Float    @default(5.0)
+  ratingCount   Int      @default(0)
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  //starTxns      StarsTransaction[]
+  //moneyTxns     MoneyTransaction[]
+  //purchases     Purchase[]
+  //watchlists    Watchlist[]
+  //assignments   GigAssignment[]
+}
+
+model Company {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  logoUrl   String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  members   Member[]
+}
+
+model Member {
+  id        String   @id @default(cuid())
+  companyId String
+  userId    String
+
+  company   Company @relation(fields: [companyId], references: [id])
+  user      User    @relation(fields: [userId], references: [id])
+
+  role      CompanyRole
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([companyId, userId])
+  @@index([userId])
+  @@index([companyId])
+}
+
+enum CompanyRole {
+  CREATOR      // can create/edit gigs
+  APPROVER     // can approve/reject
+  MANAGER      // can do both
+  OWNER        // everything + billing
+}
+
+enum MembershipTier {
+  COPPER
+  BRONZE
+  SILVER
+  GOLD
+  PLATINUM
+  DIAMOND
+}
