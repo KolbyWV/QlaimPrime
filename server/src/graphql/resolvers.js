@@ -122,6 +122,11 @@ const purchaseInclude = {
   assignment: true,
 };
 
+const watchlistInclude = {
+  user: true,
+  gig: true,
+};
+
 const normalizePagination = (limit, offset) => {
   const take =
     typeof limit === "number" ? Math.max(1, Math.min(limit, 100)) : undefined;
@@ -274,7 +279,23 @@ export const resolvers = {
       });
     },
 
-    user: async (_parent, args) => {
+    user: async (_parent, args, context) => {
+      const actorUserId = requireUserId(context);
+      if (args.id !== actorUserId) {
+        const sharedMembership = await prisma.member.findFirst({
+          where: {
+            userId: actorUserId,
+            company: {
+              members: {
+                some: { userId: args.id },
+              },
+            },
+          },
+          select: { id: true },
+        });
+        if (!sharedMembership) throw new Error("Forbidden.");
+      }
+
       return prisma.user.findUnique({
         where: { id: args.id },
         include: userInclude,
@@ -287,13 +308,26 @@ export const resolvers = {
       });
     },
 
-    users: async () => {
+    users: async (_parent, _args, context) => {
+      requireUserId(context);
       return prisma.user.findMany({
         include: userInclude,
       });
     },
 
-    company: async (_parent, args) => {
+    company: async (_parent, args, context) => {
+      const actorUserId = requireUserId(context);
+      const membership = await prisma.member.findUnique({
+        where: {
+          companyId_userId: {
+            companyId: args.id,
+            userId: actorUserId,
+          },
+        },
+        select: { id: true },
+      });
+      if (!membership) throw new Error("Forbidden.");
+
       return prisma.company.findUnique({
         where: { id: args.id },
         include: companyInclude,
@@ -642,8 +676,40 @@ export const resolvers = {
       });
     },
 
-    companies: async () => {
+    myWatchlist: async (_parent, args, context) => {
+      const userId = requireUserId(context);
+      const { take, skip } = normalizePagination(args.limit, args.offset);
+
+      // Defensive cleanup: keep watchlist limited to gigs that are still not assigned.
+      await prisma.watchlist.deleteMany({
+        where: {
+          userId,
+          gig: {
+            status: { notIn: ["DRAFT", "OPEN"] },
+          },
+        },
+      });
+
+      return prisma.watchlist.findMany({
+        where: { userId },
+        include: watchlistInclude,
+        orderBy: { createdAt: "desc" },
+        take,
+        skip,
+      });
+    },
+
+    companies: async (_parent, _args, context) => {
+      const actorUserId = requireUserId(context);
+      const memberships = await prisma.member.findMany({
+        where: { userId: actorUserId },
+        select: { companyId: true },
+      });
+      const companyIds = memberships.map((membership) => membership.companyId);
+      if (companyIds.length === 0) return [];
+
       return prisma.company.findMany({
+        where: { id: { in: companyIds } },
         include: companyInclude,
       });
     },
@@ -664,9 +730,34 @@ export const resolvers = {
       return memberships.map((membership) => membership.company);
     },
 
-    members: async () => {
+    members: async (_parent, _args, context) => {
+      const actorUserId = requireUserId(context);
+      const memberships = await prisma.member.findMany({
+        where: { userId: actorUserId },
+        select: { companyId: true },
+      });
+      const companyIds = memberships.map((membership) => membership.companyId);
+      if (companyIds.length === 0) return [];
+
       return prisma.member.findMany({
+        where: { companyId: { in: companyIds } },
         include: memberInclude,
+      });
+    },
+  },
+
+  User: {
+    watchlistEntries: async (parent, args, context) => {
+      const actorUserId = requireUserId(context);
+      if (parent.id !== actorUserId) throw new Error("Forbidden.");
+
+      const { take, skip } = normalizePagination(args?.limit, args?.offset);
+      return prisma.watchlist.findMany({
+        where: { userId: parent.id },
+        include: watchlistInclude,
+        orderBy: { createdAt: "desc" },
+        take,
+        skip,
       });
     },
   },
@@ -675,12 +766,23 @@ export const resolvers = {
     currentPriceCents: (parent) => computeCurrentPriceCents(parent),
     ageBonusStars: (parent) => computeAgeBonusStars(parent),
     repostBonusStars: (parent) => computeRepostBonusStars(parent),
-    bonusStars: (parent) =>
-      computeAgeBonusStars(parent) + computeRepostBonusStars(parent),
+    // Legacy field: persisted value only.
+    bonusStars: (parent) => parent.bonusStars,
     totalStarsReward: (parent) =>
-      coerceNonNegativeInt(parent.baseStars ?? parent.bonusStars, 0) +
+      coerceNonNegativeInt(parent.baseStars, 0) +
       computeAgeBonusStars(parent) +
       computeRepostBonusStars(parent),
+    watchlistEntries: async (parent, args, context) => {
+      requireUserId(context);
+      const { take, skip } = normalizePagination(args?.limit, args?.offset);
+      return prisma.watchlist.findMany({
+        where: { gigId: parent.id },
+        include: watchlistInclude,
+        orderBy: { createdAt: "desc" },
+        take,
+        skip,
+      });
+    },
   },
 
   Profile: {
@@ -869,6 +971,67 @@ export const resolvers = {
       return true;
     },
 
+    addGigToWatchlist: async (_parent, args, context) => {
+      const userId = requireUserId(context);
+      const { gigId } = args;
+
+      const gig = await prisma.gig.findUnique({
+        where: { id: gigId },
+        select: { id: true, status: true, companyId: true },
+      });
+      if (!gig) throw new Error("Gig not found.");
+
+      const membership = await prisma.member.findUnique({
+        where: {
+          companyId_userId: {
+            companyId: gig.companyId,
+            userId,
+          },
+        },
+        select: { id: true },
+      });
+      if (!membership) throw new Error("Forbidden.");
+
+      if (!["DRAFT", "OPEN"].includes(gig.status)) {
+        throw new Error("Only unassigned gigs can be watched.");
+      }
+
+      const existingAssignment = await prisma.gigAssignment.findFirst({
+        where: { gigId },
+        select: { id: true },
+      });
+      if (existingAssignment) throw new Error("Gig is already assigned.");
+
+      return prisma.watchlist.upsert({
+        where: {
+          userId_gigId: {
+            userId,
+            gigId,
+          },
+        },
+        create: {
+          userId,
+          gigId,
+        },
+        update: {},
+        include: watchlistInclude,
+      });
+    },
+
+    removeGigFromWatchlist: async (_parent, args, context) => {
+      const userId = requireUserId(context);
+      const { gigId } = args;
+
+      await prisma.watchlist.deleteMany({
+        where: {
+          userId,
+          gigId,
+        },
+      });
+
+      return true;
+    },
+
     deleteUser: async (_parent, args, context) => {
       const userId = requireUserId(context);
       if (userId !== args.id) throw new Error("Forbidden.");
@@ -915,6 +1078,7 @@ export const resolvers = {
               },
             },
           });
+          await tx.watchlist.deleteMany({ where: { gigId: { in: gigIds } } });
           await tx.gigAssignment.deleteMany({ where: { gigId: { in: gigIds } } });
           await tx.gig.deleteMany({ where: { id: { in: gigIds } } });
         }
@@ -941,6 +1105,7 @@ export const resolvers = {
         await tx.gigAssignment.deleteMany({
           where: { userId },
         });
+        await tx.watchlist.deleteMany({ where: { userId } });
         await tx.passwordResetToken.deleteMany({ where: { userId } });
         await tx.refreshToken.deleteMany({ where: { userId } });
         await tx.member.deleteMany({ where: { userId } });
@@ -1329,7 +1494,6 @@ export const resolvers = {
         starsBumpAmount,
         maxAgeBonusStars,
         repostBonusPerRepost,
-        bonusStars,
         requiredTier,
         status,
       } = args;
@@ -1393,13 +1557,11 @@ export const resolvers = {
           bumpCents: bumpCents ?? 100,
           maxBumps: maxBumps ?? null,
           maxPriceCents: maxPriceCents ?? null,
-          baseStars: baseStars ?? bonusStars ?? 0,
+          baseStars: baseStars ?? 0,
           starsBumpEverySeconds: starsBumpEverySeconds ?? 1800,
           starsBumpAmount: starsBumpAmount ?? 1,
           maxAgeBonusStars: maxAgeBonusStars ?? null,
           repostBonusPerRepost: repostBonusPerRepost ?? 1,
-          // Legacy column kept for compatibility; read-path computes dynamic bonus.
-          bonusStars: baseStars ?? bonusStars ?? 0,
           requiredTier: requiredTier ?? null,
           status: status ?? "DRAFT",
         },
@@ -1481,11 +1643,6 @@ export const resolvers = {
       if (args.baseStars !== undefined) {
         if (args.baseStars < 0) throw new Error("baseStars must be non-negative.");
         data.baseStars = args.baseStars;
-        data.bonusStars = args.baseStars;
-      } else if (args.bonusStars !== undefined) {
-        if (args.bonusStars < 0) throw new Error("bonusStars must be non-negative.");
-        data.baseStars = args.bonusStars;
-        data.bonusStars = args.bonusStars;
       }
       if (args.starsBumpEverySeconds !== undefined) {
         if (args.starsBumpEverySeconds <= 0) {
@@ -1582,6 +1739,7 @@ export const resolvers = {
             assignment: { gigId },
           },
         });
+        await tx.watchlist.deleteMany({ where: { gigId } });
         await tx.gigAssignment.deleteMany({ where: { gigId } });
         await tx.gig.delete({ where: { id: gigId } });
       });
@@ -1617,10 +1775,14 @@ export const resolvers = {
             gigId,
             userId: actorUserId,
             note: note?.trim() || null,
-            notes: note?.trim() || null,
             status: "CLAIMED",
           },
           include: assignmentInclude,
+        });
+
+        // Once a gig is assigned, it should no longer appear in anyone's watchlist.
+        await tx.watchlist.deleteMany({
+          where: { gigId },
         });
 
         await tx.gig.update({
@@ -1659,7 +1821,6 @@ export const resolvers = {
       const data = {
         status,
         ...(note !== undefined ? { note: note?.trim() || null } : {}),
-        ...(note !== undefined ? { notes: note?.trim() || null } : {}),
       };
       if (status === "STARTED") data.startedAt = new Date();
       if (status === "SUBMITTED") data.submittedAt = new Date();

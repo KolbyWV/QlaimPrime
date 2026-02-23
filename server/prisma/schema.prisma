@@ -19,6 +19,7 @@ model User {
   companies     Member[]
   createdGigs   Gig[]           @relation("GigCreatedBy")
   assignments   GigAssignment[] @relation("GigAssignee")
+  watchlistEntries Watchlist[]
 }
 
 model RefreshToken {
@@ -31,6 +32,8 @@ model RefreshToken {
   expiresAt   DateTime
   revokedAt   DateTime?
   replacedByTokenId String?
+  replacedBy RefreshToken? @relation("RefreshTokenRotation", fields: [replacedByTokenId], references: [id])
+  replaces RefreshToken[] @relation("RefreshTokenRotation")
 
   userAgent   String?
   ipAddress   String?
@@ -77,8 +80,7 @@ model Profile {
   starsTransactions StarsTransaction[]
   moneyTransactions MoneyTransaction[]
   purchases Purchase[]
-  //watchlists    Watchlist[]
-  //assignments   GigAssignment[]
+
 }
 
 model Company {
@@ -128,7 +130,7 @@ model Member {
 }
 
 model Gig {
-  id              String    @id @default(cuid())
+  id              String   @id @default(cuid())
   companyId       String
   createdByUserId String
 
@@ -138,30 +140,59 @@ model Gig {
   locationId  String?
   startsAt    DateTime?
   endsAt      DateTime?
+
   payCents    Int?
-  units             Int?
+  units       Int?
+
+  // Dynamic pricing configuration (persisted)
   basePriceCents    Int @default(0)
-  currentPriceCents Int @default(0)
-  bonusStars        Int @default(0)
+  bumpEverySeconds  Int @default(1800)
+  bumpCents         Int @default(100)
+  maxBumps          Int?
+  maxPriceCents     Int?
+
+  // Stars configuration (persisted)
+  baseStars            Int @default(0)
+  starsBumpEverySeconds Int @default(1800)
+  starsBumpAmount       Int @default(1)
+  maxAgeBonusStars      Int?
+  repostBonusPerRepost  Int @default(1)
+
   requiredTier      MembershipTier?
   repostCount       Int @default(0)
   escalationCount   Int @default(0)
   lastEscalatedAt   DateTime?
-  status      GigStatus @default(DRAFT)
+  status            GigStatus @default(DRAFT)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  company   Company         @relation(fields: [companyId], references: [id])
-  createdBy User            @relation("GigCreatedBy", fields: [createdByUserId], references: [id])
-  location  Location?       @relation(fields: [locationId], references: [id])
-  assignments GigAssignment[]
-  starsTransactions StarsTransaction[]
-  moneyTransactions MoneyTransaction[]
+  company   Company   @relation(fields: [companyId], references: [id])
+  createdBy User      @relation("GigCreatedBy", fields: [createdByUserId], references: [id])
+  location  Location? @relation(fields: [locationId], references: [id])
+
+  assignments        GigAssignment[]
+  starsTransactions  StarsTransaction[]
+  moneyTransactions  MoneyTransaction[]
+  watchlistEntries   Watchlist[]
 
   @@index([companyId, status])
   @@index([createdByUserId])
   @@index([locationId])
+}
+
+model Watchlist {
+  id        String   @id @default(cuid())
+  userId    String
+  gigId     String
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+  gig  Gig  @relation(fields: [gigId], references: [id])
+
+  @@unique([userId, gigId])
+  @@index([userId])
+  @@index([gigId])
 }
 
 model GigAssignment {
@@ -171,7 +202,6 @@ model GigAssignment {
 
   status AssignmentStatus @default(CLAIMED)
   note   String?
-  notes  String?
   startImageUrl String?
   endImageUrl   String?
 

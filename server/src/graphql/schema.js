@@ -24,6 +24,7 @@ export const typeDefs = `#graphql
     purchase(id: String!): Purchase
     purchases(contractorId: String, status: PurchaseStatus, limit: Int, offset: Int): [Purchase]
     myPurchases(status: PurchaseStatus, limit: Int, offset: Int): [Purchase]
+    myWatchlist(limit: Int, offset: Int): [Watchlist]
     users: [User]
     companies: [Company]
     myCompanies: [Company]
@@ -79,7 +80,6 @@ export const typeDefs = `#graphql
       maxAgeBonusStars: Int
       repostBonusPerRepost: Int
       currentPriceCents: Int
-      bonusStars: Int
       requiredTier: MembershipTier
       status: GigStatus
     ): Gig
@@ -104,7 +104,6 @@ export const typeDefs = `#graphql
       maxAgeBonusStars: Int
       repostBonusPerRepost: Int
       currentPriceCents: Int
-      bonusStars: Int
       requiredTier: MembershipTier
     ): Gig
     updateGigStatus(gigId: String!, status: GigStatus!): Gig
@@ -154,6 +153,8 @@ export const typeDefs = `#graphql
     purchaseProduct(productId: String!, appliedToAssignmentId: String): Purchase
     consumePurchase(id: String!, appliedToAssignmentId: String): Purchase
     expirePurchase(id: String!): Purchase
+    addGigToWatchlist(gigId: String!): Watchlist
+    removeGigFromWatchlist(gigId: String!): Boolean
     createLocation(
       name: String!
       address: String!
@@ -188,6 +189,7 @@ export const typeDefs = `#graphql
     companies: [Member]
     createdGigs: [Gig]
     assignments: [GigAssignment]
+    watchlistEntries: [Watchlist]
  }
 
  type AuthPayload {
@@ -282,6 +284,7 @@ export const typeDefs = `#graphql
     currentPriceCents: Int
     ageBonusStars: Int
     repostBonusStars: Int
+    # Legacy persisted field; prefer ageBonusStars/repostBonusStars/totalStarsReward.
     bonusStars: Int
     totalStarsReward: Int
     requiredTier: MembershipTier
@@ -296,6 +299,17 @@ export const typeDefs = `#graphql
     createdBy: User
     location: Location
     assignments: [GigAssignment]
+    watchlistEntries: [Watchlist]
+ }
+
+ type Watchlist {
+    id: String
+    userId: String
+    gigId: String
+    createdAt: String
+
+    user: User
+    gig: Gig
  }
 
  type GigAssignment {
@@ -304,7 +318,6 @@ export const typeDefs = `#graphql
     userId: String
     status: AssignmentStatus
     note: String
-    notes: String
     startImageUrl: String
     endImageUrl: String
     assignedAt: String
