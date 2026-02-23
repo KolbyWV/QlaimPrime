@@ -1,0 +1,4 @@
+-- Intentionally left as a no-op.
+-- A previous generated version of this migration dropped dynamic pricing columns
+-- from "Gig", which causes runtime failures in GraphQL resolvers that compute
+-- pricing/stars on read. Keep this migration non-destructive.
