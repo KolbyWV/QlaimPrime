@@ -1,0 +1,3 @@
+-- No-op migration.
+-- This migration previously attempted to alter CompanyMembershipRequest foreign keys
+-- before the table existed in the migration history, which broke shadow DB creation.

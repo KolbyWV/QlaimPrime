@@ -51,6 +51,12 @@ const memberInclude = {
   user: true,
 };
 
+const membershipRequestInclude = {
+  company: true,
+  user: true,
+  resolvedBy: true,
+};
+
 const gigInclude = {
   company: true,
   createdBy: true,
@@ -334,6 +340,27 @@ export const resolvers = {
       });
     },
 
+    companyDirectory: async (_parent, args, context) => {
+      requireUserId(context);
+      const { take, skip } = normalizePagination(args.limit, args.offset);
+      const search = args.search?.trim();
+
+      return prisma.company.findMany({
+        where: search
+          ? {
+              name: {
+                contains: search,
+                mode: "insensitive",
+              },
+            }
+          : undefined,
+        include: companyInclude,
+        orderBy: { name: "asc" },
+        take,
+        skip,
+      });
+    },
+
     companyMembers: async (_parent, args, context) => {
       const actorUserId = requireUserId(context);
 
@@ -352,6 +379,39 @@ export const resolvers = {
       return prisma.member.findMany({
         where: { companyId: args.companyId },
         include: memberInclude,
+      });
+    },
+
+    companyMembershipRequests: async (_parent, args, context) => {
+      const actorUserId = requireUserId(context);
+      await ensureCompanyOwner(args.companyId, actorUserId);
+      const { take, skip } = normalizePagination(args.limit, args.offset);
+
+      return prisma.companyMembershipRequest.findMany({
+        where: {
+          companyId: args.companyId,
+          ...(args.status ? { status: args.status } : {}),
+        },
+        include: membershipRequestInclude,
+        orderBy: { createdAt: "desc" },
+        take,
+        skip,
+      });
+    },
+
+    myCompanyMembershipRequests: async (_parent, args, context) => {
+      const actorUserId = requireUserId(context);
+      const { take, skip } = normalizePagination(args.limit, args.offset);
+
+      return prisma.companyMembershipRequest.findMany({
+        where: {
+          userId: actorUserId,
+          ...(args.status ? { status: args.status } : {}),
+        },
+        include: membershipRequestInclude,
+        orderBy: { createdAt: "desc" },
+        take,
+        skip,
       });
     },
 
@@ -1108,6 +1168,11 @@ export const resolvers = {
         await tx.watchlist.deleteMany({ where: { userId } });
         await tx.passwordResetToken.deleteMany({ where: { userId } });
         await tx.refreshToken.deleteMany({ where: { userId } });
+        await tx.companyMembershipRequest.deleteMany({
+          where: {
+            OR: [{ userId }, { resolvedByUserId: userId }],
+          },
+        });
         await tx.member.deleteMany({ where: { userId } });
         await tx.profile.deleteMany({ where: { userId } });
         await tx.user.delete({ where: { id: userId } });
@@ -1330,6 +1395,7 @@ export const resolvers = {
             },
           },
         });
+        await tx.companyMembershipRequest.deleteMany({ where: { companyId } });
         await tx.member.deleteMany({ where: { companyId } });
         await tx.company.delete({ where: { id: companyId } });
       });
@@ -1351,10 +1417,24 @@ export const resolvers = {
       if (!existingUser) throw new Error("User not found.");
 
       try {
-        return await prisma.member.create({
+        const member = await prisma.member.create({
           data: { companyId, userId, role },
           include: memberInclude,
         });
+        await prisma.companyMembershipRequest.updateMany({
+          where: {
+            companyId,
+            userId,
+            status: "PENDING",
+          },
+          data: {
+            status: "APPROVED",
+            resolvedByUserId: actorUserId,
+            resolvedAt: new Date(),
+            resolvedNote: null,
+          },
+        });
+        return member;
       } catch (error) {
         if (error?.code === "P2002") {
           throw new Error("User is already a member of this company.");
@@ -1364,6 +1444,142 @@ export const resolvers = {
         }
         throw error;
       }
+    },
+
+    requestCompanyMembership: async (_parent, args, context) => {
+      const actorUserId = requireUserId(context);
+      const requestedRole = args.requestedRole ?? "APPROVER";
+      const note = args.note?.trim() || null;
+
+      const company = await prisma.company.findUnique({
+        where: { id: args.companyId },
+        select: { id: true },
+      });
+      if (!company) throw new Error("Company not found.");
+
+      const existingMember = await prisma.member.findUnique({
+        where: {
+          companyId_userId: {
+            companyId: args.companyId,
+            userId: actorUserId,
+          },
+        },
+        select: { id: true },
+      });
+      if (existingMember) throw new Error("You are already a member of this company.");
+
+      const existingRequest = await prisma.companyMembershipRequest.findUnique({
+        where: {
+          companyId_userId: {
+            companyId: args.companyId,
+            userId: actorUserId,
+          },
+        },
+      });
+
+      if (existingRequest?.status === "PENDING") {
+        throw new Error("Membership request is already pending.");
+      }
+
+      if (existingRequest) {
+        return prisma.companyMembershipRequest.update({
+          where: { id: existingRequest.id },
+          data: {
+            requestedRole,
+            note,
+            status: "PENDING",
+            resolvedByUserId: null,
+            resolvedNote: null,
+            resolvedAt: null,
+          },
+          include: membershipRequestInclude,
+        });
+      }
+
+      return prisma.companyMembershipRequest.create({
+        data: {
+          companyId: args.companyId,
+          userId: actorUserId,
+          requestedRole,
+          note,
+          status: "PENDING",
+        },
+        include: membershipRequestInclude,
+      });
+    },
+
+    approveCompanyMembershipRequest: async (_parent, args, context) => {
+      const actorUserId = requireUserId(context);
+
+      const request = await prisma.companyMembershipRequest.findUnique({
+        where: { id: args.requestId },
+      });
+      if (!request) throw new Error("Membership request not found.");
+      if (request.status !== "PENDING") {
+        throw new Error("Only pending membership requests can be approved.");
+      }
+
+      await ensureCompanyOwner(request.companyId, actorUserId);
+
+      const approvedRole = args.role ?? request.requestedRole ?? "APPROVER";
+
+      return prisma.$transaction(async (tx) => {
+        const member = await tx.member.upsert({
+          where: {
+            companyId_userId: {
+              companyId: request.companyId,
+              userId: request.userId,
+            },
+          },
+          create: {
+            companyId: request.companyId,
+            userId: request.userId,
+            role: approvedRole,
+          },
+          update: {
+            role: approvedRole,
+          },
+          include: memberInclude,
+        });
+
+        await tx.companyMembershipRequest.update({
+          where: { id: request.id },
+          data: {
+            status: "APPROVED",
+            resolvedByUserId: actorUserId,
+            resolvedAt: new Date(),
+            resolvedNote: null,
+          },
+        });
+
+        return member;
+      });
+    },
+
+    denyCompanyMembershipRequest: async (_parent, args, context) => {
+      const actorUserId = requireUserId(context);
+      const reason = args.reason?.trim() || null;
+
+      const request = await prisma.companyMembershipRequest.findUnique({
+        where: { id: args.requestId },
+      });
+      if (!request) throw new Error("Membership request not found.");
+      if (request.status !== "PENDING") {
+        throw new Error("Only pending membership requests can be denied.");
+      }
+
+      await ensureCompanyOwner(request.companyId, actorUserId);
+
+      return prisma.companyMembershipRequest.update({
+        where: { id: request.id },
+        data: {
+          status: "DENIED",
+          resolvedByUserId: actorUserId,
+          resolvedAt: new Date(),
+          resolvedNote: reason,
+        },
+        include: membershipRequestInclude,
+      });
     },
 
     updateCompanyMemberRole: async (_parent, args, context) => {

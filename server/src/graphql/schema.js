@@ -5,7 +5,19 @@ export const typeDefs = `#graphql
     user(id: String!): User
     profileByUsername(username: String!): Profile
     company(id: String!): Company
+    companyDirectory(search: String, limit: Int, offset: Int): [Company]
     companyMembers(companyId: String!): [Member]
+    companyMembershipRequests(
+      companyId: String!
+      status: MembershipRequestStatus
+      limit: Int
+      offset: Int
+    ): [CompanyMembershipRequest]
+    myCompanyMembershipRequests(
+      status: MembershipRequestStatus
+      limit: Int
+      offset: Int
+    ): [CompanyMembershipRequest]
     location(id: String!): Location
     locations(limit: Int, offset: Int): [Location]
     gig(id: String!): Gig
@@ -55,6 +67,16 @@ export const typeDefs = `#graphql
     createCompany(name: String!, logoUrl: String): Company
     updateCompany(companyId: String!, name: String, logoUrl: String): Company
     deleteCompany(companyId: String!): Boolean
+    requestCompanyMembership(
+      companyId: String!
+      requestedRole: CompanyRole
+      note: String
+    ): CompanyMembershipRequest
+    approveCompanyMembershipRequest(requestId: String!, role: CompanyRole): Member
+    denyCompanyMembershipRequest(
+      requestId: String!
+      reason: String
+    ): CompanyMembershipRequest
     addCompanyMember(companyId: String!, userId: String!, role: CompanyRole!): Member
     updateCompanyMemberRole(companyId: String!, userId: String!, role: CompanyRole!): Member
     removeCompanyMember(companyId: String!, userId: String!): Boolean
@@ -246,6 +268,26 @@ export const typeDefs = `#graphql
     updatedAt: String
  }
 
+ type CompanyMembershipRequest {
+    id: String
+    companyId: String
+    userId: String
+
+    company: Company
+    user: User
+
+    requestedRole: CompanyRole
+    note: String
+    status: MembershipRequestStatus
+    resolvedByUserId: String
+    resolvedBy: User
+    resolvedNote: String
+    resolvedAt: String
+
+    createdAt: String
+    updatedAt: String
+ }
+
  type Location {
     id: String
     name: String
@@ -406,11 +448,17 @@ export const typeDefs = `#graphql
     assignment: GigAssignment
  }
 
- enum CompanyRole {
+enum CompanyRole {
     CREATOR      
     APPROVER     
     MANAGER      
     OWNER        
+ }
+
+ enum MembershipRequestStatus {
+    PENDING
+    APPROVED
+    DENIED
  }
 
  enum MembershipTier {

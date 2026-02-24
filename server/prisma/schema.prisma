@@ -17,6 +17,8 @@ model User {
   refreshTokens RefreshToken[]
   passwordResetTokens PasswordResetToken[]
   companies     Member[]
+  membershipRequests CompanyMembershipRequest[] @relation("MembershipRequestUser")
+  resolvedMembershipRequests CompanyMembershipRequest[] @relation("MembershipRequestResolver")
   createdGigs   Gig[]           @relation("GigCreatedBy")
   assignments   GigAssignment[] @relation("GigAssignee")
   watchlistEntries Watchlist[]
@@ -91,6 +93,7 @@ model Company {
   updatedAt DateTime @updatedAt
 
   members   Member[]
+  membershipRequests CompanyMembershipRequest[]
   gigs      Gig[]
 }
 
@@ -127,6 +130,31 @@ model Member {
   @@unique([companyId, userId])
   @@index([userId])
   @@index([companyId])
+}
+
+model CompanyMembershipRequest {
+  id        String   @id @default(cuid())
+  companyId String
+  userId    String
+
+  company   Company  @relation(fields: [companyId], references: [id])
+  user      User     @relation("MembershipRequestUser", fields: [userId], references: [id])
+  resolvedByUserId String?
+  resolvedBy User?   @relation("MembershipRequestResolver", fields: [resolvedByUserId], references: [id])
+
+  requestedRole CompanyRole @default(APPROVER)
+  note          String?
+  status        MembershipRequestStatus @default(PENDING)
+  resolvedNote  String?
+  resolvedAt    DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([companyId, userId])
+  @@index([companyId, status, createdAt])
+  @@index([userId, status, createdAt])
+  @@index([resolvedByUserId])
 }
 
 model Gig {
@@ -386,4 +414,10 @@ enum PurchaseStatus {
 enum ProductCategory {
   MEMBERSHIP_UPGRADE
   PAY_BONUS
+}
+
+enum MembershipRequestStatus {
+  PENDING
+  APPROVED
+  DENIED
 }
