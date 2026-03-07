@@ -28,7 +28,10 @@
     "react-native-web": "^0.21.0"
   },
   "devDependencies": {
-    "@babel/core": "^7.28.4"
+    "@babel/core": "^7.28.4",
+    "@types/react": "^19.2.14",
+    "@types/react-native": "^0.72.8",
+    "typescript": "^5.9.3"
   },
   "expo": {
     "plugins": [
@@ -42,7 +45,8 @@
       [
         "expo-image-picker",
         {
-          "cameraPermission": "Allow Qlaim to use your camera to capture required assignment proof photos."
+          "cameraPermission": "Allow Qlaim to use your camera to capture required assignment proof photos.",
+          "photosPermission": "Allow Qlaim to access your photo library to upload assignment proof photos."
         }
       ]
     ]

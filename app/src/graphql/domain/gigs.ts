@@ -1,0 +1,192 @@
+import { gql } from "@apollo/client";
+
+import {
+  ASSIGNMENT_SUMMARY_FRAGMENT,
+  GIG_SUMMARY_FRAGMENT,
+} from "./fragments";
+
+export const GIG_QUERY = gql`
+  query Gig($id: ID!) {
+    gig(id: $id) {
+      ...GigSummary
+      assignments {
+        ...AssignmentSummary
+      }
+    }
+  }
+  ${GIG_SUMMARY_FRAGMENT}
+  ${ASSIGNMENT_SUMMARY_FRAGMENT}
+`;
+
+export const GIGS_QUERY = gql`
+  query Gigs($companyId: ID, $status: GigStatus, $limit: Int, $offset: Int) {
+    gigs(companyId: $companyId, status: $status, limit: $limit, offset: $offset) {
+      ...GigSummary
+    }
+  }
+  ${GIG_SUMMARY_FRAGMENT}
+`;
+
+export const MY_WATCHLIST_QUERY = gql`
+  query MyWatchlist($limit: Int, $offset: Int) {
+    myWatchlist(limit: $limit, offset: $offset) {
+      id
+      userId
+      gigId
+      createdAt
+      gig {
+        ...GigSummary
+      }
+    }
+  }
+  ${GIG_SUMMARY_FRAGMENT}
+`;
+
+export const CREATE_GIG_MUTATION = gql`
+  mutation CreateGig(
+    $companyId: ID!
+    $title: String!
+    $description: String
+    $type: GigType
+    $locationId: ID!
+    $startsAt: String
+    $endsAt: String
+    $payCents: Int
+    $units: Int
+    $basePriceCents: Int
+    $bumpEverySeconds: Int
+    $bumpCents: Int
+    $maxBumps: Int
+    $maxPriceCents: Int
+    $baseStars: Int
+    $starsBumpEverySeconds: Int
+    $starsBumpAmount: Int
+    $maxAgeBonusStars: Int
+    $repostBonusPerRepost: Int
+    $currentPriceCents: Int
+    $requiredTier: MembershipTier
+    $status: GigStatus
+  ) {
+    createGig(
+      companyId: $companyId
+      title: $title
+      description: $description
+      type: $type
+      locationId: $locationId
+      startsAt: $startsAt
+      endsAt: $endsAt
+      payCents: $payCents
+      units: $units
+      basePriceCents: $basePriceCents
+      bumpEverySeconds: $bumpEverySeconds
+      bumpCents: $bumpCents
+      maxBumps: $maxBumps
+      maxPriceCents: $maxPriceCents
+      baseStars: $baseStars
+      starsBumpEverySeconds: $starsBumpEverySeconds
+      starsBumpAmount: $starsBumpAmount
+      maxAgeBonusStars: $maxAgeBonusStars
+      repostBonusPerRepost: $repostBonusPerRepost
+      currentPriceCents: $currentPriceCents
+      requiredTier: $requiredTier
+      status: $status
+    ) {
+      ...GigSummary
+    }
+  }
+  ${GIG_SUMMARY_FRAGMENT}
+`;
+
+export const UPDATE_GIG_MUTATION = gql`
+  mutation UpdateGig(
+    $gigId: ID!
+    $title: String
+    $description: String
+    $type: GigType
+    $locationId: ID
+    $startsAt: String
+    $endsAt: String
+    $payCents: Int
+    $units: Int
+    $basePriceCents: Int
+    $bumpEverySeconds: Int
+    $bumpCents: Int
+    $maxBumps: Int
+    $maxPriceCents: Int
+    $baseStars: Int
+    $starsBumpEverySeconds: Int
+    $starsBumpAmount: Int
+    $maxAgeBonusStars: Int
+    $repostBonusPerRepost: Int
+    $currentPriceCents: Int
+    $requiredTier: MembershipTier
+  ) {
+    updateGig(
+      gigId: $gigId
+      title: $title
+      description: $description
+      type: $type
+      locationId: $locationId
+      startsAt: $startsAt
+      endsAt: $endsAt
+      payCents: $payCents
+      units: $units
+      basePriceCents: $basePriceCents
+      bumpEverySeconds: $bumpEverySeconds
+      bumpCents: $bumpCents
+      maxBumps: $maxBumps
+      maxPriceCents: $maxPriceCents
+      baseStars: $baseStars
+      starsBumpEverySeconds: $starsBumpEverySeconds
+      starsBumpAmount: $starsBumpAmount
+      maxAgeBonusStars: $maxAgeBonusStars
+      repostBonusPerRepost: $repostBonusPerRepost
+      currentPriceCents: $currentPriceCents
+      requiredTier: $requiredTier
+    ) {
+      ...GigSummary
+    }
+  }
+  ${GIG_SUMMARY_FRAGMENT}
+`;
+
+export const UPDATE_GIG_STATUS_MUTATION = gql`
+  mutation UpdateGigStatus($gigId: ID!, $status: GigStatus!) {
+    updateGigStatus(gigId: $gigId, status: $status) {
+      ...GigSummary
+    }
+  }
+  ${GIG_SUMMARY_FRAGMENT}
+`;
+
+export const DELETE_GIG_MUTATION = gql`
+  mutation DeleteGig($gigId: ID!) {
+    deleteGig(gigId: $gigId)
+  }
+`;
+
+export const CLAIM_GIG_MUTATION = gql`
+  mutation ClaimGig($gigId: ID!, $note: String) {
+    claimGig(gigId: $gigId, note: $note) {
+      ...AssignmentSummary
+    }
+  }
+  ${ASSIGNMENT_SUMMARY_FRAGMENT}
+`;
+
+export const ADD_GIG_TO_WATCHLIST_MUTATION = gql`
+  mutation AddGigToWatchlist($gigId: ID!) {
+    addGigToWatchlist(gigId: $gigId) {
+      id
+      gigId
+      userId
+      createdAt
+    }
+  }
+`;
+
+export const REMOVE_GIG_FROM_WATCHLIST_MUTATION = gql`
+  mutation RemoveGigFromWatchlist($gigId: ID!) {
+    removeGigFromWatchlist(gigId: $gigId)
+  }
+`;
