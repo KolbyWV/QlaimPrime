@@ -13,6 +13,48 @@ import { GRAPHQL_URL } from "./config";
 import { REFRESH_TOKEN_MUTATION } from "./domain/auth";
 
 const refreshMutation = print(REFRESH_TOKEN_MUTATION);
+const ACCESS_TOKEN_REFRESH_SKEW_MS = 30 * 1000;
+
+function decodeBase64(value) {
+  if (typeof atob === "function") {
+    return atob(value);
+  }
+  if (typeof globalThis?.Buffer?.from === "function") {
+    return globalThis.Buffer.from(value, "base64").toString("utf-8");
+  }
+  throw new Error("No base64 decoder available.");
+}
+
+function getAccessTokenExpiryMs(token) {
+  if (!token || typeof token !== "string") {
+    return null;
+  }
+
+  const parts = token.split(".");
+  if (parts.length !== 3) {
+    return null;
+  }
+
+  try {
+    const payload = JSON.parse(
+      decodeBase64(parts[1].replace(/-/g, "+").replace(/_/g, "/")),
+    );
+    if (!Number.isFinite(payload?.exp)) {
+      return null;
+    }
+    return payload.exp * 1000;
+  } catch {
+    return null;
+  }
+}
+
+function isAccessTokenStale(token) {
+  const expiryMs = getAccessTokenExpiryMs(token);
+  if (!expiryMs) {
+    return false;
+  }
+  return Date.now() >= expiryMs - ACCESS_TOKEN_REFRESH_SKEW_MS;
+}
 
 function isUnauthorized(graphQLErrors = [], networkError) {
   const hasGraphQlAuthError = graphQLErrors.some((error) => {
@@ -101,9 +143,41 @@ export function createApolloClient({
     return refreshed.accessToken;
   };
 
+  const refreshAccessTokenWithLock = async () => {
+    if (refreshing) {
+      await queueRefresh();
+      const tokenAfterRefresh = await tokenManager.getAccessToken();
+      if (!tokenAfterRefresh) {
+        throw new Error("Refresh completed without an access token.");
+      }
+      return tokenAfterRefresh;
+    }
+
+    refreshing = true;
+    try {
+      const newAccessToken = await refreshAccessToken();
+      resolveRefreshQueue();
+      return newAccessToken;
+    } catch (error) {
+      rejectRefreshQueue(error);
+      await tokenManager.handleRefreshFailure(error);
+      throw error;
+    } finally {
+      refreshing = false;
+    }
+  };
+
   const authLink = setContext(async (_, { headers }) => {
-    const accessToken = await tokenManager.getAccessToken();
+    let accessToken = await tokenManager.getAccessToken();
     const refreshToken = await tokenManager.getRefreshToken();
+
+    if (accessToken && isAccessTokenStale(accessToken)) {
+      try {
+        accessToken = await refreshAccessTokenWithLock();
+      } catch {
+        accessToken = null;
+      }
+    }
 
     return {
       headers: {
@@ -131,22 +205,11 @@ export function createApolloClient({
         });
     }
 
-    refreshing = true;
-
     return fromPromise(
-      refreshAccessToken()
+      refreshAccessTokenWithLock()
         .then((newAccessToken) => {
-          resolveRefreshQueue();
           return newAccessToken;
         })
-        .catch(async (error) => {
-          rejectRefreshQueue(error);
-          await tokenManager.handleRefreshFailure(error);
-          throw error;
-        })
-        .finally(() => {
-          refreshing = false;
-        }),
     ).flatMap((newAccessToken) => {
       operation.setContext(({ headers = {} }) => ({
         headers: {
@@ -163,7 +226,31 @@ export function createApolloClient({
   const httpLink = new HttpLink({ uri: graphqlUrl });
 
   return new ApolloClient({
-    cache: new InMemoryCache(),
+    cache: new InMemoryCache({
+      typePolicies: {
+        Query: {
+          fields: {
+            gigs: {
+              // We always replace these lists from network responses (no cursor merge).
+              merge: false,
+            },
+            myWatchlist: {
+              merge: false,
+            },
+            myAssignments: {
+              merge: false,
+            },
+          },
+        },
+        Gig: {
+          fields: {
+            watchlistEntries: {
+              merge: false,
+            },
+          },
+        },
+      },
+    }),
     link: from([errorLink, authLink, httpLink]),
     connectToDevTools: __DEV__,
     defaultOptions: {

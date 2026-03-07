@@ -10,6 +10,7 @@ export const ME_QUERY = gql`
     me {
       id
       email
+      role
       createdAt
       updatedAt
       profile {
@@ -32,6 +33,7 @@ export const LOGIN_MUTATION = gql`
       user {
         id
         email
+        role
         profile {
           ...ProfileSummary
         }
@@ -53,6 +55,7 @@ export const REGISTER_MUTATION = gql`
       user {
         id
         email
+        role
         profile {
           ...ProfileSummary
         }
@@ -74,6 +77,7 @@ export const REFRESH_TOKEN_MUTATION = gql`
       user {
         id
         email
+        role
       }
     }
   }

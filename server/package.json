@@ -6,7 +6,16 @@
   "type": "module",
   "scripts": {
     "start": "node src/index.js",
-    "dev": "node --watch src/index.js"
+    "dev": "node --watch src/index.js",
+    "seed": "node prisma/seed.js",
+    "db:seed": "prisma db seed",
+    "test": "npm run test:seed:integrity",
+    "test:seed:integrity": "node scripts/test-seed-integrity.js",
+    "test:smoke:api": "node scripts/test-api-smoke.js",
+    "backfill:gig-base-stars:dry": "node scripts/backfill-gig-base-stars.js",
+    "backfill:gig-base-stars": "node scripts/backfill-gig-base-stars.js --apply",
+    "backfill:assignment-stars:dry": "node scripts/backfill-assignment-stars.js",
+    "backfill:assignment-stars": "node scripts/backfill-assignment-stars.js --apply"
   },
   "keywords": [],
   "author": "",
@@ -29,5 +38,8 @@
   },
   "engines": {
     "node": ">=22.12"
+  },
+  "prisma": {
+    "seed": "node prisma/seed.js"
   }
 }

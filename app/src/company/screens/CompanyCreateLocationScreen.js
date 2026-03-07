@@ -148,9 +148,7 @@ export function CompanyCreateLocationScreen({ navigation }) {
         </Card>
       ) : !canCreateLocation ? (
         <Card>
-          <Body>
-            Your role is {activeMemberRole || "UNKNOWN"}. Only CREATOR, MANAGER, or OWNER can create locations.
-          </Body>
+          <Body>This page is unavailable.</Body>
         </Card>
       ) : (
         <Card>

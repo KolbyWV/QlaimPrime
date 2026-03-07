@@ -1,13 +1,37 @@
-import React from "react";
-import { Text } from "react-native";
+import React, { useCallback, useMemo, useState } from "react";
+import { RefreshControl, Text } from "react-native";
 import { useMutation, useQuery } from "@apollo/client/react";
+import { useFocusEffect } from "@react-navigation/native";
 
-import { MY_PURCHASES_QUERY, PRODUCTS_QUERY, PURCHASE_PRODUCT_MUTATION } from "../../graphql/domain";
+import { useSession } from "../../auth/session";
+import {
+  MY_PURCHASES_QUERY,
+  PRODUCTS_QUERY,
+  PURCHASE_PRODUCT_MUTATION,
+} from "../../graphql/domain";
+import { Body, Card, Heading, LoadingState, Screen, SearchInput, SectionTitle } from "../../ui/components";
+import { ShopProductCard, UserSummaryCard } from "../../ui/domain";
 import { useAppTheme } from "../../ui/theme";
-import { Body, Button, Card, Heading, LoadingState, Screen } from "../../ui/components";
+
+function normalizeSearch(value) {
+  return value.trim().toLowerCase();
+}
+
+function matchesProduct(product, search) {
+  if (!search) {
+    return true;
+  }
+
+  const combined = [product?.title, product?.subtitle, product?.category].filter(Boolean).join(" ").toLowerCase();
+  return combined.includes(search);
+}
 
 export function WorkerShopScreen() {
   const { theme } = useAppTheme();
+  const { me, refreshMe } = useSession();
+  const [search, setSearch] = useState("");
+  const [operationError, setOperationError] = useState(null);
+  const [refreshing, setRefreshing] = useState(false);
 
   const {
     data: productsData,
@@ -15,7 +39,7 @@ export function WorkerShopScreen() {
     error: productsError,
     refetch: refetchProducts,
   } = useQuery(PRODUCTS_QUERY, {
-    variables: { limit: 30, offset: 0 },
+    variables: { limit: 50, offset: 0 },
   });
 
   const {
@@ -24,57 +48,125 @@ export function WorkerShopScreen() {
     error: purchasesError,
     refetch: refetchPurchases,
   } = useQuery(MY_PURCHASES_QUERY, {
-    variables: { limit: 30, offset: 0 },
+    variables: { limit: 50, offset: 0 },
   });
 
   const [purchaseProduct, { loading: purchasing }] = useMutation(PURCHASE_PRODUCT_MUTATION, {
-    onCompleted: () => {
-      refetchProducts();
-      refetchPurchases();
+    onCompleted: async () => {
+      setOperationError(null);
+      await Promise.all([refetchProducts(), refetchPurchases(), refreshMe()]);
+    },
+    onError: (nextError) => {
+      setOperationError(nextError.message || "Unable to purchase item.");
     },
   });
 
+  useFocusEffect(
+    useCallback(() => {
+      refreshMe().catch(() => {
+        // Ignore focus-refresh failures; existing queries still render screen state.
+      });
+    }, [refreshMe]),
+  );
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await Promise.all([refetchProducts(), refetchPurchases(), refreshMe()]);
+    } catch (nextError) {
+      setOperationError(nextError?.message || "Unable to refresh Star Shop.");
+    } finally {
+      setRefreshing(false);
+    }
+  }, [refetchProducts, refetchPurchases, refreshMe]);
+
+  const normalizedSearch = normalizeSearch(search);
+  const products = useMemo(
+    () => (productsData?.products || []).filter((product) => matchesProduct(product, normalizedSearch)),
+    [productsData, normalizedSearch],
+  );
+  const ownedProductIds = useMemo(() => {
+    const ids = new Set();
+    (purchasesData?.myPurchases || []).forEach((purchase) => {
+      if (purchase?.status === "ACTIVE" || purchase?.status === "CONSUMED") {
+        ids.add(purchase.productId);
+      }
+    });
+    return ids;
+  }, [purchasesData]);
+
+  const membershipProducts = products.filter((product) => product.category === "MEMBERSHIP_UPGRADE");
+  const bonusProducts = products.filter((product) => product.category === "PAY_BONUS");
+
   if (productsLoading || purchasesLoading) {
     return (
-      <Screen>
-        <LoadingState label="Loading shop..." />
+      <Screen hideBack>
+        <LoadingState label="Loading StarShop..." />
       </Screen>
     );
   }
 
-  const products = productsData?.products || [];
-  const purchases = purchasesData?.myPurchases || [];
-
   return (
-    <Screen scroll>
-      <Heading>Star Market</Heading>
-      <Body style={{ marginBottom: 12 }}>Products and purchases from schema-backed operations.</Body>
+    <Screen
+      hideBack
+      scroll
+      contentStyle={{ paddingBottom: 130 }}
+      refreshControl={
+        <RefreshControl
+          refreshing={refreshing}
+          onRefresh={onRefresh}
+          tintColor={theme.colors.primary}
+          colors={[theme.colors.primary]}
+        />
+      }
+    >
+      <Heading style={{ fontSize: 32, marginBottom: 10 }}>STAR SHOP</Heading>
+      <UserSummaryCard
+        name={`${me?.profile?.firstName || ""} ${me?.profile?.lastName || ""}`.trim() || me?.email || "Profile"}
+        username={me?.profile?.username || "username"}
+        tier={me?.profile?.tier || "COPPER"}
+        starsBalance={me?.profile?.starsBalance || 0}
+        starsOnly
+      />
+
+      <SearchInput value={search} onChangeText={setSearch} placeholder="Search" />
 
       {productsError ? <Text style={{ color: theme.colors.danger }}>{productsError.message}</Text> : null}
       {purchasesError ? <Text style={{ color: theme.colors.danger }}>{purchasesError.message}</Text> : null}
+      {operationError ? <Text style={{ color: theme.colors.danger }}>{operationError}</Text> : null}
 
-      <Card>
-        <Heading style={{ fontSize: 20 }}>My purchases</Heading>
-        {purchases.length === 0 ? <Body>No purchases yet.</Body> : null}
-        {purchases.map((purchase) => (
-          <Body key={purchase.id}>
-            {purchase.product?.title || "Unknown"} · {purchase.status}
-          </Body>
-        ))}
-      </Card>
-
-      {products.map((product) => (
-        <Card key={product.id}>
-          <Heading style={{ fontSize: 19 }}>{product.title}</Heading>
-          <Body>{product.subtitle || "No subtitle"}</Body>
-          <Body>{product.starsCost || 0} stars</Body>
-          <Button
-            label="Purchase"
-            onPress={() => purchaseProduct({ variables: { productId: product.id } })}
-            loading={purchasing}
-          />
-        </Card>
+      <SectionTitle>Membership upgrades</SectionTitle>
+      {membershipProducts.map((product) => (
+        <ShopProductCard
+          key={product.id}
+          product={product}
+          variant="membership"
+          onPurchase={() => purchaseProduct({ variables: { productId: product.id } })}
+          loading={purchasing}
+          owned={ownedProductIds.has(product.id)}
+        />
       ))}
+      {membershipProducts.length === 0 ? (
+        <Card>
+          <Body>No membership products found.</Body>
+        </Card>
+      ) : null}
+
+      <SectionTitle style={{ marginTop: 8 }}>Cash bonuses</SectionTitle>
+      {bonusProducts.map((product) => (
+        <ShopProductCard
+          key={product.id}
+          product={product}
+          variant="bonus"
+          onPurchase={() => purchaseProduct({ variables: { productId: product.id } })}
+          loading={purchasing}
+          owned={ownedProductIds.has(product.id)}
+        />
+      ))}
+      {bonusProducts.length === 0 ? (
+        <Card>
+          <Body>No bonus products found.</Body>
+        </Card>
+      ) : null}
     </Screen>
   );
 }

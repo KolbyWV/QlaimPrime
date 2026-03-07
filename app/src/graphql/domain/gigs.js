@@ -27,13 +27,28 @@ export const GIGS_QUERY = gql`
   ${GIG_SUMMARY_FRAGMENT}
 `;
 
+export const MY_WATCHLIST_QUERY = gql`
+  query MyWatchlist($limit: Int, $offset: Int) {
+    myWatchlist(limit: $limit, offset: $offset) {
+      id
+      userId
+      gigId
+      createdAt
+      gig {
+        ...GigSummary
+      }
+    }
+  }
+  ${GIG_SUMMARY_FRAGMENT}
+`;
+
 export const CREATE_GIG_MUTATION = gql`
   mutation CreateGig(
     $companyId: String!
     $title: String!
     $description: String
     $type: GigType
-    $locationId: String
+    $locationId: String!
     $startsAt: String
     $endsAt: String
     $payCents: Int

@@ -7,6 +7,7 @@ import React, {
   useRef,
   useState,
 } from "react";
+import { Alert, Platform } from "react-native";
 
 import { createApolloClient } from "../../graphql/client";
 import {
@@ -17,9 +18,12 @@ import {
 } from "../../graphql/domain";
 import {
   clearStoredTokens,
+  clearStoredTier,
   readStoredMode,
+  readStoredTier,
   readStoredTokens,
   writeStoredMode,
+  writeStoredTier,
   writeStoredTokens,
 } from "./tokenStorage";
 
@@ -29,6 +33,11 @@ const EMPTY_TOKENS = {
   accessToken: null,
   refreshToken: null,
 };
+const TIER_ORDER = ["COPPER", "BRONZE", "SILVER", "GOLD", "PLATINUM", "DIAMOND"];
+
+function tierRank(tier) {
+  return TIER_ORDER.indexOf(tier);
+}
 
 export function SessionProvider({ children }) {
   const tokensRef = useRef(EMPTY_TOKENS);
@@ -58,7 +67,7 @@ export function SessionProvider({ children }) {
     setStatus("anonymous");
 
     if (persist) {
-      await clearStoredTokens();
+      await Promise.all([clearStoredTokens(), clearStoredTier()]);
     }
   }, []);
 
@@ -77,6 +86,26 @@ export function SessionProvider({ children }) {
     });
   }, [applyTokens, clearSession]);
 
+  const maybeNotifyTierUpgrade = useCallback(async (nextMe) => {
+    const nextTier = nextMe?.profile?.tier;
+    if (!nextTier) return;
+
+    const previousTier = await readStoredTier();
+    await writeStoredTier(nextTier);
+
+    if (!previousTier) return;
+    if (tierRank(nextTier) <= tierRank(previousTier)) return;
+
+    const message = `You have been upgraded from ${previousTier} to ${nextTier}.`;
+    if (Platform.OS === "web") {
+      if (typeof window !== "undefined" && typeof window.alert === "function") {
+        window.alert(message);
+      }
+      return;
+    }
+    Alert.alert("Tier Upgraded", message);
+  }, []);
+
   const refreshMe = useCallback(async () => {
     const { data, errors } = await apolloClient.query({
       query: ME_QUERY,
@@ -87,11 +116,16 @@ export function SessionProvider({ children }) {
       throw new Error(errors[0].message || "Failed to load session user.");
     }
 
-    setMe(data?.me || null);
-    setStatus(data?.me ? "authenticated" : "anonymous");
+    const nextMe = data?.me || null;
+    setMe(nextMe);
+    setStatus(nextMe ? "authenticated" : "anonymous");
 
-    return data?.me || null;
-  }, [apolloClient]);
+    if (nextMe?.profile?.tier) {
+      await maybeNotifyTierUpgrade(nextMe);
+    }
+
+    return nextMe;
+  }, [apolloClient, maybeNotifyTierUpgrade]);
 
   const signIn = useCallback(
     async ({ email, password }) => {
@@ -122,6 +156,9 @@ export function SessionProvider({ children }) {
 
       setMe(payload.user || null);
       setStatus("authenticated");
+      if (payload.user?.profile?.tier) {
+        await writeStoredTier(payload.user.profile.tier);
+      }
 
       if (!payload.user) {
         await refreshMe();
@@ -161,6 +198,9 @@ export function SessionProvider({ children }) {
 
       setMe(payload.user || null);
       setStatus("authenticated");
+      if (payload.user?.profile?.tier) {
+        await writeStoredTier(payload.user.profile.tier);
+      }
 
       if (!payload.user) {
         await refreshMe();
@@ -190,9 +230,19 @@ export function SessionProvider({ children }) {
 
   const switchMode = useCallback(async (nextMode) => {
     const normalized = nextMode || null;
+
+    if (normalized === "admin" && tokensRef.current.accessToken) {
+      try {
+        // Ensure role changes made server-side are visible before admin route gating.
+        await refreshMe();
+      } catch {
+        // Ignore refresh failures here; route-level guards still apply.
+      }
+    }
+
     setMode(normalized);
     await writeStoredMode(normalized);
-  }, []);
+  }, [refreshMe]);
 
   useEffect(() => {
     let cancelled = false;
@@ -210,7 +260,11 @@ export function SessionProvider({ children }) {
           return;
         }
 
-        setMode(storedMode === "worker" || storedMode === "company" ? storedMode : null);
+        setMode(
+          storedMode === "worker" || storedMode === "company" || storedMode === "admin"
+            ? storedMode
+            : null,
+        );
 
         await applyTokens(storedTokens, { persist: false });
 

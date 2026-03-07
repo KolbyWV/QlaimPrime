@@ -10,6 +10,7 @@ model User {
   id           String   @id @default(cuid())
   email        String   @unique
   passwordHash String
+  role         UserRole @default(USER)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
@@ -232,6 +233,8 @@ model GigAssignment {
   note   String?
   startImageUrl String?
   endImageUrl   String?
+  startImageUrls String[] @default([])
+  endImageUrls   String[] @default([])
 
   assignedAt  DateTime  @default(now())
   claimedAt   DateTime  @default(now())
@@ -420,4 +423,9 @@ enum MembershipRequestStatus {
   PENDING
   APPROVED
   DENIED
+}
+
+enum UserRole {
+  USER
+  ADMIN
 }

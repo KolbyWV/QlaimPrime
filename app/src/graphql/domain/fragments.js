@@ -119,6 +119,10 @@ export const GIG_SUMMARY_FRAGMENT = gql`
     repostCount
     escalationCount
     lastEscalatedAt
+    watchlistCount
+    watchlistEntries {
+      id
+    }
     status
     createdAt
     updatedAt
@@ -142,6 +146,8 @@ export const ASSIGNMENT_SUMMARY_FRAGMENT = gql`
     note
     startImageUrl
     endImageUrl
+    startImageUrls
+    endImageUrls
     assignedAt
     claimedAt
     startedAt

@@ -30,8 +30,20 @@ export const ASSIGNMENT_HISTORY_QUERY = gql`
 `;
 
 export const UPDATE_ASSIGNMENT_STATUS_MUTATION = gql`
-  mutation UpdateAssignmentStatus($assignmentId: String!, $status: AssignmentStatus!, $note: String) {
-    updateAssignmentStatus(assignmentId: $assignmentId, status: $status, note: $note) {
+  mutation UpdateAssignmentStatus(
+    $assignmentId: String!
+    $status: AssignmentStatus!
+    $note: String
+    $startImageUrls: [String!]
+    $endImageUrls: [String!]
+  ) {
+    updateAssignmentStatus(
+      assignmentId: $assignmentId
+      status: $status
+      note: $note
+      startImageUrls: $startImageUrls
+      endImageUrls: $endImageUrls
+    ) {
       ...AssignmentSummary
     }
   }

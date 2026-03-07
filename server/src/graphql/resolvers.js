@@ -61,6 +61,11 @@ const gigInclude = {
   company: true,
   createdBy: true,
   location: true,
+  _count: {
+    select: {
+      watchlistEntries: true,
+    },
+  },
   assignments: {
     include: {
       user: true,
@@ -130,7 +135,12 @@ const purchaseInclude = {
 
 const watchlistInclude = {
   user: true,
-  gig: true,
+  gig: {
+    include: {
+      company: true,
+      location: true,
+    },
+  },
 };
 
 const normalizePagination = (limit, offset) => {
@@ -138,6 +148,13 @@ const normalizePagination = (limit, offset) => {
     typeof limit === "number" ? Math.max(1, Math.min(limit, 100)) : undefined;
   const skip = typeof offset === "number" ? Math.max(0, offset) : undefined;
   return { take, skip };
+};
+
+const normalizeImageUrls = (urls) => {
+  if (!Array.isArray(urls)) return [];
+  return urls
+    .map((item) => (typeof item === "string" ? item.trim() : ""))
+    .filter(Boolean);
 };
 
 // Central auth guard for resolvers that require a logged-in user.
@@ -203,6 +220,14 @@ const ensureCompanyRole = async (companyId, userId, allowedRoles) => {
 
 // Dynamic pricing/stars are computed on read; no cron/job mutates Gig price over time.
 const PRICE_BUMP_ACTIVE_STATUSES = new Set(["DRAFT", "OPEN"]);
+const TIER_ORDER = ["COPPER", "BRONZE", "SILVER", "GOLD", "PLATINUM", "DIAMOND"];
+const TIER_THRESHOLDS = [
+  { minimumFiveStarCompletions: 500, tier: "DIAMOND" },
+  { minimumFiveStarCompletions: 250, tier: "PLATINUM" },
+  { minimumFiveStarCompletions: 100, tier: "GOLD" },
+  { minimumFiveStarCompletions: 25, tier: "SILVER" },
+  { minimumFiveStarCompletions: 10, tier: "BRONZE" },
+];
 
 const coerceNonNegativeInt = (value, fallback = 0) => {
   if (!Number.isFinite(value)) return fallback;
@@ -270,6 +295,145 @@ const computeRepostBonusStars = (gig) => {
   const repostCount = coerceNonNegativeInt(gig.repostCount, 0);
   const perRepost = coerceNonNegativeInt(gig.repostBonusPerRepost, 1);
   return repostCount * perRepost;
+};
+
+const computeTotalStarsReward = (gig) =>
+  coerceNonNegativeInt(gig.baseStars, 0) + computeAgeBonusStars(gig) + computeRepostBonusStars(gig);
+
+const getTierRank = (tier) => TIER_ORDER.indexOf(tier);
+
+const tierFromFiveStarCompletionCount = (count) => {
+  for (const rule of TIER_THRESHOLDS) {
+    if (count >= rule.minimumFiveStarCompletions) return rule.tier;
+  }
+  return "COPPER";
+};
+
+const maybeUpgradeTierFromFiveStarCompletions = async (tx, assigneeUserId) => {
+  const profile = await tx.profile.findUnique({
+    where: { userId: assigneeUserId },
+    select: { id: true, tier: true },
+  });
+  if (!profile) return null;
+
+  const fiveStarCompletionCount = await tx.gigReview.count({
+    where: {
+      decision: "APPROVED",
+      starsRating: 5,
+      assignment: {
+        userId: assigneeUserId,
+      },
+    },
+  });
+
+  const earnedTier = tierFromFiveStarCompletionCount(fiveStarCompletionCount);
+  if (getTierRank(earnedTier) <= getTierRank(profile.tier)) {
+    return null;
+  }
+
+  return tx.profile.update({
+    where: { id: profile.id },
+    data: { tier: earnedTier },
+    select: { id: true, tier: true },
+  });
+};
+
+const gigPayoutSelect = {
+  id: true,
+  companyId: true,
+  status: true,
+  payCents: true,
+  basePriceCents: true,
+  bumpEverySeconds: true,
+  bumpCents: true,
+  maxBumps: true,
+  maxPriceCents: true,
+  baseStars: true,
+  starsBumpEverySeconds: true,
+  starsBumpAmount: true,
+  maxAgeBonusStars: true,
+  repostCount: true,
+  repostBonusPerRepost: true,
+  createdAt: true,
+  updatedAt: true,
+  endsAt: true,
+};
+
+const createPayoutForCompletedAssignment = async (tx, { assignmentId, assigneeUserId, gig }) => {
+  const payoutCents = computeCurrentPriceCents(gig);
+  if (payoutCents <= 0) return null;
+
+  const existingPayout = await tx.moneyTransaction.findFirst({
+    where: {
+      assignmentId,
+      reason: "PAYOUT",
+    },
+    select: { id: true },
+  });
+  if (existingPayout) return null;
+
+  const assigneeProfile = await tx.profile.findUnique({
+    where: { userId: assigneeUserId },
+    select: { id: true },
+  });
+  if (!assigneeProfile) {
+    throw new Error("Profile not found for assignment assignee.");
+  }
+
+  return tx.moneyTransaction.create({
+    data: {
+      contractorId: assigneeProfile.id,
+      amountCents: payoutCents,
+      reason: "PAYOUT",
+      gigId: gig.id,
+      assignmentId,
+    },
+    include: moneyTransactionInclude,
+  });
+};
+
+const createStarsRewardForCompletedAssignment = async (tx, { assignmentId, assigneeUserId, gig }) => {
+  const starsDelta = computeTotalStarsReward(gig);
+  if (starsDelta <= 0) return null;
+
+  const existingStarsReward = await tx.starsTransaction.findFirst({
+    where: {
+      assignmentId,
+      reason: "EARNED_FROM_REVIEW",
+    },
+    select: { id: true },
+  });
+  if (existingStarsReward) return null;
+
+  const assigneeProfile = await tx.profile.findUnique({
+    where: { userId: assigneeUserId },
+    select: { id: true },
+  });
+  if (!assigneeProfile) {
+    throw new Error("Profile not found for assignment assignee.");
+  }
+
+  const starsTransaction = await tx.starsTransaction.create({
+    data: {
+      contractorId: assigneeProfile.id,
+      delta: starsDelta,
+      reason: "EARNED_FROM_REVIEW",
+      gigId: gig.id,
+      assignmentId,
+    },
+    include: starsTransactionInclude,
+  });
+
+  await tx.profile.update({
+    where: { id: assigneeProfile.id },
+    data: {
+      starsBalance: {
+        increment: starsDelta,
+      },
+    },
+  });
+
+  return starsTransaction;
 };
 
 
@@ -516,17 +680,27 @@ export const resolvers = {
         where: { userId: actorUserId },
         select: { companyId: true },
       });
-
       const companyIds = memberships.map((membership) => membership.companyId);
-      if (companyIds.length === 0) return [];
 
-      const where = {
-        companyId: args.companyId ?? { in: companyIds },
-        ...(args.status ? { status: args.status } : {}),
-      };
+      let where;
 
-      if (args.companyId && !companyIds.includes(args.companyId)) {
-        throw new Error("Forbidden.");
+      if (args.companyId) {
+        if (!companyIds.includes(args.companyId)) {
+          throw new Error("Forbidden.");
+        }
+        where = {
+          companyId: args.companyId,
+          ...(args.status ? { status: args.status } : {}),
+        };
+      } else if (args.status === "OPEN") {
+        // Profile feed should show all public OPEN gigs across companies.
+        where = { status: "OPEN" };
+      } else {
+        if (companyIds.length === 0) return [];
+        where = {
+          companyId: { in: companyIds },
+          ...(args.status ? { status: args.status } : {}),
+        };
       }
 
       const { take, skip } = normalizePagination(args.limit, args.offset);
@@ -832,6 +1006,15 @@ export const resolvers = {
       coerceNonNegativeInt(parent.baseStars, 0) +
       computeAgeBonusStars(parent) +
       computeRepostBonusStars(parent),
+    watchlistCount: async (parent, _args, context) => {
+      requireUserId(context);
+      if (parent?._count?.watchlistEntries !== undefined) {
+        return parent._count.watchlistEntries;
+      }
+      return prisma.watchlist.count({
+        where: { gigId: parent.id },
+      });
+    },
     watchlistEntries: async (parent, args, context) => {
       requireUserId(context);
       const { take, skip } = normalizePagination(args?.limit, args?.offset);
@@ -1037,20 +1220,9 @@ export const resolvers = {
 
       const gig = await prisma.gig.findUnique({
         where: { id: gigId },
-        select: { id: true, status: true, companyId: true },
+        select: { id: true, status: true },
       });
       if (!gig) throw new Error("Gig not found.");
-
-      const membership = await prisma.member.findUnique({
-        where: {
-          companyId_userId: {
-            companyId: gig.companyId,
-            userId,
-          },
-        },
-        select: { id: true },
-      });
-      if (!membership) throw new Error("Forbidden.");
 
       if (!["DRAFT", "OPEN"].includes(gig.status)) {
         throw new Error("Only unassigned gigs can be watched.");
@@ -1747,13 +1919,12 @@ export const resolvers = {
       if (repostBonusPerRepost !== undefined && repostBonusPerRepost < 0) {
         throw new Error("repostBonusPerRepost must be non-negative.");
       }
-      if (locationId) {
-        const existingLocation = await prisma.location.findUnique({
-          where: { id: locationId },
-          select: { id: true },
-        });
-        if (!existingLocation) throw new Error("Location not found.");
-      }
+      if (!locationId?.trim()) throw new Error("Location is required.");
+      const existingLocation = await prisma.location.findUnique({
+        where: { id: locationId },
+        select: { id: true },
+      });
+      if (!existingLocation) throw new Error("Location not found.");
 
       return prisma.gig.create({
         data: {
@@ -1762,7 +1933,7 @@ export const resolvers = {
           title: title.trim(),
           description: description?.trim() || null,
           type: type ?? "STANDARD",
-          locationId: locationId ?? null,
+          locationId,
           startsAt: startsAtDate,
           endsAt: endsAtDate,
           payCents: payCents ?? null,
@@ -1773,7 +1944,7 @@ export const resolvers = {
           bumpCents: bumpCents ?? 100,
           maxBumps: maxBumps ?? null,
           maxPriceCents: maxPriceCents ?? null,
-          baseStars: baseStars ?? 0,
+          baseStars: baseStars ?? 5,
           starsBumpEverySeconds: starsBumpEverySeconds ?? 1800,
           starsBumpAmount: starsBumpAmount ?? 1,
           maxAgeBonusStars: maxAgeBonusStars ?? null,
@@ -1967,25 +2138,20 @@ export const resolvers = {
       const actorUserId = requireUserId(context);
       const { gigId, note } = args;
 
-      const gig = await prisma.gig.findUnique({
-        where: { id: gigId },
-        select: { id: true, companyId: true, status: true },
-      });
-      if (!gig) throw new Error("Gig not found.");
-      if (gig.status !== "OPEN") throw new Error("Gig is not open for claiming.");
-
-      const member = await prisma.member.findUnique({
-        where: {
-          companyId_userId: {
-            companyId: gig.companyId,
-            userId: actorUserId,
-          },
-        },
-        select: { id: true },
-      });
-      if (!member) throw new Error("You are not a member of this company.");
-
       return prisma.$transaction(async (tx) => {
+        const gig = await tx.gig.findUnique({
+          where: { id: gigId },
+          select: { id: true, status: true },
+        });
+        if (!gig) throw new Error("Gig not found.");
+        if (gig.status !== "OPEN") throw new Error("Gig is not open for claiming.");
+
+        const existingAssignment = await tx.gigAssignment.findFirst({
+          where: { gigId },
+          select: { id: true },
+        });
+        if (existingAssignment) throw new Error("Gig is already assigned.");
+
         const assignment = await tx.gigAssignment.create({
           data: {
             gigId,
@@ -2012,11 +2178,11 @@ export const resolvers = {
 
     updateAssignmentStatus: async (_parent, args, context) => {
       const actorUserId = requireUserId(context);
-      const { assignmentId, status, note } = args;
+      const { assignmentId, status, note, startImageUrls, endImageUrls } = args;
 
       const assignment = await prisma.gigAssignment.findUnique({
         where: { id: assignmentId },
-        include: { gig: { select: { id: true, companyId: true } } },
+        include: { gig: { select: gigPayoutSelect } },
       });
       if (!assignment) throw new Error("Assignment not found.");
 
@@ -2033,31 +2199,63 @@ export const resolvers = {
       const isCompanyAdmin =
         actorMembership && ["OWNER", "MANAGER", "APPROVER"].includes(actorMembership.role);
       if (!isAssignee && !isCompanyAdmin) throw new Error("Forbidden.");
+      if (status === "COMPLETED" && !isCompanyAdmin) {
+        throw new Error("Only company approvers/managers/owners can complete assignments.");
+      }
 
       const data = {
         status,
         ...(note !== undefined ? { note: note?.trim() || null } : {}),
       };
+      if (status === "STARTED") {
+        const normalizedStartImages = normalizeImageUrls(startImageUrls);
+        if (normalizedStartImages.length !== 2) {
+          throw new Error("Exactly 2 start photos are required to start an assignment.");
+        }
+        data.startImageUrls = normalizedStartImages;
+        data.startImageUrl = normalizedStartImages[0];
+      }
+      if (status === "SUBMITTED") {
+        const normalizedEndImages = normalizeImageUrls(endImageUrls);
+        if (normalizedEndImages.length !== 2) {
+          throw new Error("Exactly 2 submission photos are required to submit an assignment.");
+        }
+        data.endImageUrls = normalizedEndImages;
+        data.endImageUrl = normalizedEndImages[0];
+      }
       if (status === "STARTED") data.startedAt = new Date();
       if (status === "SUBMITTED") data.submittedAt = new Date();
       if (status === "REVIEWED") data.reviewedAt = new Date();
       if (status === "ACCEPTED") data.acceptedAt = new Date();
       if (status === "COMPLETED") data.completedAt = new Date();
 
-      const updated = await prisma.gigAssignment.update({
-        where: { id: assignmentId },
-        data,
-        include: assignmentInclude,
-      });
-
-      if (status === "COMPLETED") {
-        await prisma.gig.update({
-          where: { id: assignment.gig.id },
-          data: { status: "COMPLETED" },
+      return prisma.$transaction(async (tx) => {
+        const updated = await tx.gigAssignment.update({
+          where: { id: assignmentId },
+          data,
+          include: assignmentInclude,
         });
-      }
 
-      return updated;
+        if (status === "COMPLETED") {
+          await tx.gig.update({
+            where: { id: assignment.gig.id },
+            data: { status: "COMPLETED" },
+          });
+
+          await createPayoutForCompletedAssignment(tx, {
+            assignmentId: assignment.id,
+            assigneeUserId: assignment.userId,
+            gig: assignment.gig,
+          });
+          await createStarsRewardForCompletedAssignment(tx, {
+            assignmentId: assignment.id,
+            assigneeUserId: assignment.userId,
+            gig: assignment.gig,
+          });
+        }
+
+        return updated;
+      });
     },
 
     createGigReview: async (_parent, args, context) => {
@@ -2070,7 +2268,7 @@ export const resolvers = {
 
       const assignment = await prisma.gigAssignment.findUnique({
         where: { id: assignmentId },
-        include: { gig: { select: { id: true, companyId: true } }, review: true },
+        include: { gig: { select: gigPayoutSelect }, review: true },
       });
       if (!assignment) throw new Error("Assignment not found.");
       if (assignment.review) throw new Error("Assignment already reviewed.");
@@ -2106,6 +2304,7 @@ export const resolvers = {
           data: {
             reviewedAt: new Date(),
             status: decision === "APPROVED" ? "COMPLETED" : "REVIEWED",
+            ...(decision === "APPROVED" ? { completedAt: new Date() } : {}),
           },
         });
 
@@ -2114,6 +2313,18 @@ export const resolvers = {
             where: { id: assignment.gig.id },
             data: { status: "COMPLETED" },
           });
+
+          await createPayoutForCompletedAssignment(tx, {
+            assignmentId: assignment.id,
+            assigneeUserId: assignment.userId,
+            gig: assignment.gig,
+          });
+          await createStarsRewardForCompletedAssignment(tx, {
+            assignmentId: assignment.id,
+            assigneeUserId: assignment.userId,
+            gig: assignment.gig,
+          });
+          await maybeUpgradeTierFromFiveStarCompletions(tx, assignment.userId);
         }
 
         return review;

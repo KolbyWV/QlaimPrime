@@ -9,6 +9,7 @@ export function CompanyAccountScreen() {
   const { themeMode, toggleThemeMode } = useAppTheme();
 
   const membershipCount = me?.companies?.length || 0;
+  const canAccessAdmin = me?.role === "ADMIN";
 
   return (
     <Screen scroll>
@@ -23,6 +24,9 @@ export function CompanyAccountScreen() {
 
       <Card>
         <Button label="Switch to Profile Mode" onPress={() => switchMode("worker")} />
+        {canAccessAdmin ? (
+          <Button label="Switch to Admin Mode" variant="secondary" onPress={() => switchMode("admin")} />
+        ) : null}
         <Button
           label={themeMode === "dark" ? "Use Light Theme" : "Use Dark Theme"}
           variant="secondary"

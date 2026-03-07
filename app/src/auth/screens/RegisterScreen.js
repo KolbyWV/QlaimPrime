@@ -1,17 +1,20 @@
 import React, { useState } from "react";
-import { Text } from "react-native";
+import { Image, Pressable, Text, View } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
 
 import { useSession } from "../session";
+import { Body, Button, Field, Heading, Screen } from "../../ui/components";
 import { useAppTheme } from "../../ui/theme";
-import { Body, Button, Card, Field, Heading, Screen } from "../../ui/components";
 
 export function RegisterScreen({ navigation }) {
   const { theme } = useAppTheme();
-  const { register, mode } = useSession();
+  const { register } = useSession();
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
 
@@ -34,49 +37,80 @@ export function RegisterScreen({ navigation }) {
   };
 
   return (
-    <Screen scroll>
-      <Heading>Create account</Heading>
-      <Body style={{ marginBottom: 12 }}>
-        Mode selected: {mode === "company" ? "Company" : "Profile"}
-      </Body>
+    <Screen scroll contentStyle={{ paddingTop: 8, paddingBottom: 30 }}>
+      <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+        <Pressable onPress={() => navigation.goBack()} hitSlop={10}>
+          <Ionicons name="arrow-back" size={30} color={theme.colors.text} />
+        </Pressable>
+        <Pressable onPress={() => navigation.goBack()} hitSlop={10}>
+          <Text style={{ color: theme.colors.primary, fontSize: 18, fontWeight: "700" }}>Sign In</Text>
+        </Pressable>
+      </View>
 
-      <Card>
-        <Field
-          label="Email"
-          value={email}
-          onChangeText={setEmail}
-          placeholder="you@company.com"
-          autoCapitalize="none"
+      <View style={{ alignItems: "center", marginTop: 22, marginBottom: 12 }}>
+        <Image
+          source={require("../../images/logos/QlaimBig.png")}
+          style={{ width: 140, height: 140 }}
+          resizeMode="contain"
         />
+      </View>
 
-        <Field
-          label="Password"
-          value={password}
-          onChangeText={setPassword}
-          secureTextEntry
-          placeholder="Create password"
-        />
+      <Heading style={{ fontSize: 30, marginBottom: 4 }}>Create account</Heading>
+      <Body style={{ fontSize: 16, marginBottom: 18 }}>Set up your Qlaim account to start claiming gigs</Body>
 
-        <Field
-          label="Confirm Password"
-          value={confirmPassword}
-          onChangeText={setConfirmPassword}
-          secureTextEntry
-          placeholder="Re-enter password"
-        />
+      <Field
+        label="Email"
+        value={email}
+        onChangeText={setEmail}
+        placeholder="Email"
+        autoCapitalize="none"
+        keyboardType="email-address"
+        rightAdornment={<Ionicons name="person-outline" size={24} color={theme.colors.text} />}
+      />
 
-        {error ? (
-          <Text style={{ color: theme.colors.danger, marginBottom: 10 }}>{error}</Text>
-        ) : null}
+      <Field
+        label="Password"
+        value={password}
+        onChangeText={setPassword}
+        secureTextEntry={!showPassword}
+        placeholder="Password"
+        rightAdornment={
+          <Pressable onPress={() => setShowPassword((prev) => !prev)} hitSlop={8}>
+            <Ionicons
+              name={showPassword ? "eye-outline" : "eye-off-outline"}
+              size={24}
+              color={theme.colors.text}
+            />
+          </Pressable>
+        }
+      />
 
-        <Button
-          label="Register"
-          onPress={onSubmit}
-          loading={loading}
-          disabled={!email || !password || !confirmPassword}
-        />
-        <Button label="Already have an account" variant="secondary" onPress={() => navigation.goBack()} />
-      </Card>
+      <Field
+        label="Confirm password"
+        value={confirmPassword}
+        onChangeText={setConfirmPassword}
+        secureTextEntry={!showConfirmPassword}
+        placeholder="Confirm password"
+        rightAdornment={
+          <Pressable onPress={() => setShowConfirmPassword((prev) => !prev)} hitSlop={8}>
+            <Ionicons
+              name={showConfirmPassword ? "eye-outline" : "eye-off-outline"}
+              size={24}
+              color={theme.colors.text}
+            />
+          </Pressable>
+        }
+      />
+
+      {error ? <Text style={{ color: theme.colors.danger, marginBottom: 10 }}>{error}</Text> : null}
+
+      <Button
+        label={loading ? "Creating account..." : "Sign up"}
+        onPress={onSubmit}
+        loading={loading}
+        disabled={!email || !password || !confirmPassword}
+        style={{ minHeight: 56 }}
+      />
     </Screen>
   );
 }

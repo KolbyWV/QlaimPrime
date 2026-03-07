@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from "react";
-import { Text, View } from "react-native";
+import { Pressable, Text, View } from "react-native";
 import { useMutation, useQuery } from "@apollo/client/react";
 
 import { useSession } from "../../auth/session";
@@ -21,6 +21,23 @@ import {
 } from "../../ui/components";
 
 const GIG_CREATOR_ROLES = new Set(["CREATOR", "MANAGER", "OWNER"]);
+const GIG_TYPE_OPTIONS = [
+  {
+    value: "STANDARD",
+    label: "Standard",
+    description: "General task work on-site.",
+  },
+  {
+    value: "DELIVERY",
+    label: "Delivery",
+    description: "Unload pallets from delivery.",
+  },
+  {
+    value: "AUDIT",
+    label: "Audit",
+    description: "Verification, quality, or compliance checks.",
+  },
+];
 
 const PAY_TIER_BANDS = [
   { max: 50, minimumTier: "COPPER", allowedTiers: ["COPPER"] },
@@ -51,6 +68,8 @@ export function CompanyCreateGigScreen({ navigation }) {
 
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
+  const [gigType, setGigType] = useState("STANDARD");
+  const [isGigTypeOpen, setIsGigTypeOpen] = useState(false);
   const [payDollars, setPayDollars] = useState("");
   const [units, setUnits] = useState("");
   const [startsAt, setStartsAt] = useState(() => {
@@ -94,6 +113,10 @@ export function CompanyCreateGigScreen({ navigation }) {
     }
     return `${selected.name} (${selected.city}, ${selected.state})`;
   }, [locations, selectedLocationId]);
+  const selectedGigType = useMemo(
+    () => GIG_TYPE_OPTIONS.find((option) => option.value === gigType) || GIG_TYPE_OPTIONS[0],
+    [gigType],
+  );
 
   if (companyQuery.loading || locationsQuery.loading) {
     return (
@@ -148,6 +171,10 @@ export function CompanyCreateGigScreen({ navigation }) {
       setError("Title is required.");
       return;
     }
+    if (!selectedLocationId) {
+      setError("Location is required.");
+      return;
+    }
 
     setError(null);
 
@@ -161,8 +188,8 @@ export function CompanyCreateGigScreen({ navigation }) {
           companyId: activeCompanyId,
           title: title.trim(),
           description: description.trim() || null,
-          type: "STANDARD",
-          locationId: selectedLocationId || null,
+          type: gigType,
+          locationId: selectedLocationId,
           startsAt: startsAt.toISOString(),
           endsAt: endsAt.toISOString(),
           payCents: parseCents(),
@@ -195,9 +222,7 @@ export function CompanyCreateGigScreen({ navigation }) {
         </Card>
       ) : !canCreateGig ? (
         <Card>
-          <Body>
-            Your role is {activeMemberRole || "UNKNOWN"}. Only CREATOR, MANAGER, or OWNER can create gigs.
-          </Body>
+          <Body>This page is unavailable.</Body>
         </Card>
       ) : (
         <Card>
@@ -213,6 +238,51 @@ export function CompanyCreateGigScreen({ navigation }) {
             onChangeText={setDescription}
             placeholder="Optional details for assignees"
           />
+          <Heading style={{ fontSize: 18 }}>Gig Type</Heading>
+          <Pressable
+            onPress={() => setIsGigTypeOpen((prev) => !prev)}
+            style={{
+              borderWidth: 1,
+              borderColor: theme.colors.border,
+              backgroundColor: theme.colors.surfaceAlt,
+              borderRadius: theme.radii.sm,
+              paddingHorizontal: 12,
+              paddingVertical: 11,
+              marginBottom: 8,
+            }}
+          >
+            <Text style={{ color: theme.colors.text, fontSize: 15, fontWeight: "600" }}>
+              {selectedGigType.label} ({selectedGigType.value})
+            </Text>
+            <Body style={{ marginTop: 2, marginBottom: 0 }}>{selectedGigType.description}</Body>
+          </Pressable>
+          {isGigTypeOpen ? (
+            <Card style={{ marginBottom: 12 }}>
+              {GIG_TYPE_OPTIONS.map((option) => (
+                <Pressable
+                  key={option.value}
+                  onPress={() => {
+                    setGigType(option.value);
+                    setIsGigTypeOpen(false);
+                  }}
+                  style={{
+                    borderWidth: 1,
+                    borderColor: option.value === gigType ? theme.colors.primary : theme.colors.border,
+                    borderRadius: theme.radii.sm,
+                    backgroundColor: option.value === gigType ? theme.colors.surfaceAlt : theme.colors.surface,
+                    paddingHorizontal: 12,
+                    paddingVertical: 10,
+                    marginBottom: 8,
+                  }}
+                >
+                  <Text style={{ color: theme.colors.text, fontSize: 15, fontWeight: "700" }}>
+                    {option.label} ({option.value})
+                  </Text>
+                  <Body style={{ marginTop: 2, marginBottom: 0 }}>{option.description}</Body>
+                </Pressable>
+              ))}
+            </Card>
+          ) : null}
           <Field
             label="Pay (USD)"
             value={payDollars}
@@ -278,11 +348,11 @@ export function CompanyCreateGigScreen({ navigation }) {
 
           <Heading style={{ fontSize: 18 }}>Location</Heading>
           <Body style={{ marginBottom: 8 }}>Selected: {selectedLocationLabel}</Body>
-          <Button
-            label="No location"
-            variant={selectedLocationId ? "secondary" : "primary"}
-            onPress={() => setSelectedLocationId(null)}
-          />
+          {locations.length === 0 ? (
+            <Body style={{ marginBottom: 10 }}>
+              Create a location first before publishing gigs.
+            </Body>
+          ) : null}
           {locationsQuery.error ? (
             <Text style={{ color: theme.colors.danger, marginBottom: 10 }}>
               {locationsQuery.error.message}
@@ -311,14 +381,14 @@ export function CompanyCreateGigScreen({ navigation }) {
           <Button
             label="Create as Draft"
             loading={loading}
-            disabled={!title.trim()}
+            disabled={!title.trim() || !selectedLocationId}
             onPress={() => onCreate("DRAFT")}
           />
           <Button
             label="Create & Open"
             variant="secondary"
             loading={loading}
-            disabled={!title.trim()}
+            disabled={!title.trim() || !selectedLocationId}
             onPress={() => onCreate("OPEN")}
           />
         </Card>

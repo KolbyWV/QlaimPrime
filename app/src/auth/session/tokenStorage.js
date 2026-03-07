@@ -4,6 +4,7 @@ import * as SecureStore from "expo-secure-store";
 const ACCESS_TOKEN_KEY = "prime.accessToken";
 const REFRESH_TOKEN_KEY = "prime.refreshToken";
 const MODE_KEY = "prime.mode";
+const LAST_SEEN_TIER_KEY = "prime.lastSeenTier";
 
 const memoryStore = {};
 
@@ -91,4 +92,16 @@ export async function writeStoredMode(mode) {
 
 export async function clearStoredMode() {
   await deleteItem(MODE_KEY);
+}
+
+export async function readStoredTier() {
+  return readItem(LAST_SEEN_TIER_KEY);
+}
+
+export async function writeStoredTier(tier) {
+  await writeItem(LAST_SEEN_TIER_KEY, tier || null);
+}
+
+export async function clearStoredTier() {
+  await deleteItem(LAST_SEEN_TIER_KEY);
 }

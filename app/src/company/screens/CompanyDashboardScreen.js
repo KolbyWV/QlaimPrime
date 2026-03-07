@@ -47,7 +47,15 @@ export function CompanyDashboardScreen({ navigation }) {
   return (
     <Screen scroll>
       <Heading>Company dashboard</Heading>
-      <Body style={{ marginBottom: 12 }}>My companies and quick actions.</Body>
+      <Body style={{ marginBottom: 20 }}>My companies and quick actions.</Body>
+
+      {companies.map((company) => (
+        <Card key={company.id}>
+          <Heading style={{ fontSize: 20 }}>{company.name}</Heading>
+          <Body>ID: {company.id}</Body>
+          <Body>Created: {company.createdAt || "-"}</Body>
+        </Card>
+      ))}
 
       {error ? <Text style={{ color: theme.colors.danger }}>{error.message}</Text> : null}
       {canModerateRequests && membershipRequestsQuery.error ? (
@@ -55,40 +63,30 @@ export function CompanyDashboardScreen({ navigation }) {
       ) : null}
       {!activeCompanyId ? (
         <Body style={{ marginBottom: 10 }}>Join or create a company to access company actions.</Body>
-      ) : !canUseCreateActions ? (
-        <Body style={{ marginBottom: 10 }}>
-          Your role is {activeMemberRole || "UNKNOWN"}. Only CREATOR, MANAGER, or OWNER can create gigs and locations.
-        </Body>
       ) : null}
 
-      <View style={{ flexDirection: compact ? "column" : "row", marginBottom: 12 }}>
-        <View style={{ flex: 1, marginRight: compact ? 0 : 6 }}>
-          <Card>
-            <Heading style={{ fontSize: 20 }}>Add A New Gig</Heading>
-            <Body style={{ marginBottom: 10 }}>
-              Publish new work opportunities for contractors.
-            </Body>
-            <Button
-              label="Create Gig"
-              disabled={!canUseCreateActions}
-              onPress={() => navigation.navigate("CreateGig")}
-            />
-          </Card>
+      {canUseCreateActions ? (
+        <View style={{ flexDirection: compact ? "column" : "row", marginBottom: 12 }}>
+          <View style={{ flex: 1, marginRight: compact ? 0 : 6 }}>
+            <Card>
+              <Heading style={{ fontSize: 20 }}>Add A New Gig</Heading>
+              <Body style={{ marginBottom: 10 }}>
+                Publish new work opportunities for contractors.
+              </Body>
+              <Button label="Create Gig" onPress={() => navigation.navigate("CreateGig")} />
+            </Card>
+          </View>
+          <View style={{ flex: 1, marginLeft: compact ? 0 : 6 }}>
+            <Card>
+              <Heading style={{ fontSize: 20 }}>Add A Location</Heading>
+              <Body style={{ marginBottom: 10 }}>
+                Add saved locations used when posting gigs.
+              </Body>
+              <Button label="Create Location" onPress={() => navigation.navigate("CreateLocation")} />
+            </Card>
+          </View>
         </View>
-        <View style={{ flex: 1, marginLeft: compact ? 0 : 6 }}>
-          <Card>
-            <Heading style={{ fontSize: 20 }}>Add A Location</Heading>
-            <Body style={{ marginBottom: 10 }}>
-              Add saved locations used when posting gigs.
-            </Body>
-            <Button
-              label="Create Location"
-              disabled={!canUseCreateActions}
-              onPress={() => navigation.navigate("CreateLocation")}
-            />
-          </Card>
-        </View>
-      </View>
+      ) : null}
 
       {canModerateRequests ? (
         <Card>
@@ -110,14 +108,6 @@ export function CompanyDashboardScreen({ navigation }) {
           />
         </Card>
       ) : null}
-
-      {companies.map((company) => (
-        <Card key={company.id}>
-          <Heading style={{ fontSize: 20 }}>{company.name}</Heading>
-          <Body>ID: {company.id}</Body>
-          <Body>Created: {company.createdAt || "-"}</Body>
-        </Card>
-      ))}
 
       {companies.length === 0 ? (
         <Card>

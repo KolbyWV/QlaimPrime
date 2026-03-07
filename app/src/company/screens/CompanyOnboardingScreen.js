@@ -14,7 +14,7 @@ import { Body, Button, Card, Field, Heading, Screen } from "../../ui/components"
 
 export function CompanyOnboardingScreen({ navigation }) {
   const { theme } = useAppTheme();
-  const { me, refreshMe, signOut } = useSession();
+  const { me, refreshMe, signOut, switchMode } = useSession();
   const [name, setName] = useState("");
   const [logoUrl, setLogoUrl] = useState("");
   const [search, setSearch] = useState("");
@@ -58,13 +58,20 @@ export function CompanyOnboardingScreen({ navigation }) {
 
   useLayoutEffect(() => {
     navigation.setOptions({
+      headerLeft: () => (
+        <Pressable onPress={() => switchMode(null)} hitSlop={10}>
+          <Text style={{ color: theme.colors.primary, fontSize: 15, fontWeight: "600" }}>
+            {"Back"}
+          </Text>
+        </Pressable>
+      ),
       headerRight: () => (
         <Pressable onPress={signOut} hitSlop={10}>
           <Text style={{ color: theme.colors.primary, fontSize: 15, fontWeight: "600" }}>Log out</Text>
         </Pressable>
       ),
     });
-  }, [navigation, signOut, theme.colors.primary]);
+  }, [navigation, signOut, switchMode, theme.colors.primary]);
 
   const onCreate = async () => {
     setCreateError(null);

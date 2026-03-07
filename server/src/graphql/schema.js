@@ -86,7 +86,7 @@ export const typeDefs = `#graphql
       title: String!
       description: String
       type: GigType
-      locationId: String
+      locationId: String!
       startsAt: String
       endsAt: String
       payCents: Int
@@ -131,7 +131,13 @@ export const typeDefs = `#graphql
     updateGigStatus(gigId: String!, status: GigStatus!): Gig
     deleteGig(gigId: String!): Boolean
     claimGig(gigId: String!, note: String): GigAssignment
-    updateAssignmentStatus(assignmentId: String!, status: AssignmentStatus!, note: String): GigAssignment
+    updateAssignmentStatus(
+      assignmentId: String!
+      status: AssignmentStatus!
+      note: String
+      startImageUrls: [String!]
+      endImageUrls: [String!]
+    ): GigAssignment
     createGigReview(
       assignmentId: String!
       starsRating: Int!
@@ -201,11 +207,12 @@ export const typeDefs = `#graphql
     logout(refreshToken: String!): Boolean
  }
 
- type User{
-    id: String
-    email: String
-    createdAt: String
-    updatedAt: String
+type User{
+   id: String
+   email: String
+   role: UserRole
+   createdAt: String
+   updatedAt: String
 
     profile: Profile
     companies: [Member]
@@ -342,6 +349,7 @@ export const typeDefs = `#graphql
     location: Location
     assignments: [GigAssignment]
     watchlistEntries: [Watchlist]
+    watchlistCount: Int
  }
 
  type Watchlist {
@@ -362,6 +370,8 @@ export const typeDefs = `#graphql
     note: String
     startImageUrl: String
     endImageUrl: String
+    startImageUrls: [String!]
+    endImageUrls: [String!]
     assignedAt: String
     claimedAt: String
     startedAt: String
@@ -455,10 +465,15 @@ enum CompanyRole {
     OWNER        
  }
 
- enum MembershipRequestStatus {
-    PENDING
-    APPROVED
-    DENIED
+enum MembershipRequestStatus {
+   PENDING
+   APPROVED
+   DENIED
+ }
+
+ enum UserRole {
+   USER
+   ADMIN
  }
 
  enum MembershipTier {
