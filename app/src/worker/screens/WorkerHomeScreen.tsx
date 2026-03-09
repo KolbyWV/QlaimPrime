@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { RefreshControl, ScrollView, Text, View } from "react-native";
+import { Alert, Image, Platform, RefreshControl, ScrollView, Text, View } from "react-native";
 import { useMutation, useQuery } from "@apollo/client/react";
 import { useFocusEffect } from "@react-navigation/native";
 import * as ImagePicker from "expo-image-picker";
@@ -7,6 +7,7 @@ import * as ImagePicker from "expo-image-picker";
 import { useSession } from "../../auth/session";
 import {
   ADD_GIG_TO_WATCHLIST_MUTATION,
+  CREATE_IMAGE_UPLOAD_URL_MUTATION,
   GIGS_QUERY,
   MY_ASSIGNMENTS_QUERY,
   MY_WATCHLIST_QUERY,
@@ -16,6 +17,7 @@ import {
 import { Body, Button, Card, Heading, LoadingState, Screen, SearchInput, SectionTitle } from "../../ui/components";
 import { GigCard } from "../../ui/domain";
 import { useAppTheme } from "../../ui/theme";
+import { uploadImageWithPresignedUrl } from "../../utils/imageUpload";
 
 const ACTIVE_ASSIGNMENT_STATUSES = new Set(["CLAIMED", "ACCEPTED", "STARTED"]);
 const TIER_MAX_DOLLARS = {
@@ -89,6 +91,8 @@ export function WorkerHomeScreen({ route, navigation }) {
   const [refreshing, setRefreshing] = useState(false);
   const [startProofPhotos, setStartProofPhotos] = useState([null, null]);
   const [submitProofPhotos, setSubmitProofPhotos] = useState([null, null]);
+  const [startProofPreviews, setStartProofPreviews] = useState([null, null]);
+  const [submitProofPreviews, setSubmitProofPreviews] = useState([null, null]);
 
   const { data, loading, refetch, error } = useQuery(GIGS_QUERY, {
     variables: { status: "OPEN", limit: 40, offset: 0 },
@@ -142,6 +146,9 @@ export function WorkerHomeScreen({ route, navigation }) {
         setOperationError(nextError.message || "Unable to update assignment.");
       },
     },
+  );
+  const [createImageUploadUrl, { loading: creatingUploadUrl }] = useMutation(
+    CREATE_IMAGE_UPLOAD_URL_MUTATION,
   );
 
   const watchlistByGigId = useMemo(() => {
@@ -248,6 +255,8 @@ export function WorkerHomeScreen({ route, navigation }) {
   useEffect(() => {
     setStartProofPhotos([null, null]);
     setSubmitProofPhotos([null, null]);
+    setStartProofPreviews([null, null]);
+    setSubmitProofPreviews([null, null]);
   }, [selectedAssignment?.id]);
 
   const onToggleWatch = useCallback(
@@ -312,24 +321,69 @@ export function WorkerHomeScreen({ route, navigation }) {
         return;
       }
 
-      const uri = result.assets[0].uri;
+      const localUri = result.assets[0].uri;
+      const folder =
+        kind === "start" ? "assignment-start-proofs" : "assignment-submit-proofs";
+      const fileUrl = await uploadImageWithPresignedUrl({
+        localUri,
+        bucket: "PRIVATE",
+        folder,
+        createImageUploadUrl,
+      });
+
       if (kind === "start") {
         setStartProofPhotos((prev) => {
           const next = [...prev];
-          next[index] = uri;
+          next[index] = fileUrl;
+          return next;
+        });
+        setStartProofPreviews((prev) => {
+          const next = [...prev];
+          next[index] = localUri;
           return next;
         });
         return;
       }
       setSubmitProofPhotos((prev) => {
         const next = [...prev];
-        next[index] = uri;
+        next[index] = fileUrl;
+        return next;
+      });
+      setSubmitProofPreviews((prev) => {
+        const next = [...prev];
+        next[index] = localUri;
         return next;
       });
     } catch (nextError) {
       setOperationError(nextError?.message || "Unable to capture photo right now.");
     }
   }, []);
+
+  const uploadProofPhoto = useCallback(
+    (kind, index) => {
+      if (Platform.OS === "web") {
+        captureProofPhoto(kind, index, "library");
+        return;
+      }
+
+      Alert.alert("Upload photo", "Choose photo source", [
+        {
+          text: "Camera",
+          onPress: () => {
+            captureProofPhoto(kind, index, "camera");
+          },
+        },
+        {
+          text: "Library",
+          onPress: () => {
+            captureProofPhoto(kind, index, "library");
+          },
+        },
+        { text: "Cancel", style: "cancel" },
+      ]);
+    },
+    [captureProofPhoto],
+  );
 
   if (loading || assignmentsLoading || watchlistLoading) {
     return (
@@ -390,20 +444,24 @@ export function WorkerHomeScreen({ route, navigation }) {
                       <Body style={{ marginBottom: 4, fontWeight: "700" }}>
                         Photo {i + 1}{startProofPhotos[i] ? " ✓" : ""}
                       </Body>
-                      <View style={{ flexDirection: "row", gap: 8 }}>
-                        <Button
-                          label="Camera"
-                          variant="secondary"
-                          onPress={() => captureProofPhoto("start", i, "camera")}
-                          style={{ flex: 1 }}
+                      {startProofPreviews[i] ? (
+                        <Image
+                          source={{ uri: startProofPreviews[i] }}
+                          style={{
+                            width: 88,
+                            height: 88,
+                            borderRadius: 10,
+                            borderWidth: 1,
+                            borderColor: theme.colors.border,
+                            marginBottom: 8,
+                          }}
                         />
-                        <Button
-                          label="Library"
-                          variant="secondary"
-                          onPress={() => captureProofPhoto("start", i, "library")}
-                          style={{ flex: 1 }}
-                        />
-                      </View>
+                      ) : null}
+                      <Button
+                        label={startProofPhotos[i] ? "Replace photo" : "Upload photo"}
+                        variant="secondary"
+                        onPress={() => uploadProofPhoto("start", i)}
+                      />
                     </View>
                   ))}
                   <Body style={{ marginBottom: 0 }}>
@@ -419,20 +477,24 @@ export function WorkerHomeScreen({ route, navigation }) {
                       <Body style={{ marginBottom: 4, fontWeight: "700" }}>
                         Photo {i + 1}{submitProofPhotos[i] ? " ✓" : ""}
                       </Body>
-                      <View style={{ flexDirection: "row", gap: 8 }}>
-                        <Button
-                          label="Camera"
-                          variant="secondary"
-                          onPress={() => captureProofPhoto("submit", i, "camera")}
-                          style={{ flex: 1 }}
+                      {submitProofPreviews[i] ? (
+                        <Image
+                          source={{ uri: submitProofPreviews[i] }}
+                          style={{
+                            width: 88,
+                            height: 88,
+                            borderRadius: 10,
+                            borderWidth: 1,
+                            borderColor: theme.colors.border,
+                            marginBottom: 8,
+                          }}
                         />
-                        <Button
-                          label="Library"
-                          variant="secondary"
-                          onPress={() => captureProofPhoto("submit", i, "library")}
-                          style={{ flex: 1 }}
-                        />
-                      </View>
+                      ) : null}
+                      <Button
+                        label={submitProofPhotos[i] ? "Replace photo" : "Upload photo"}
+                        variant="secondary"
+                        onPress={() => uploadProofPhoto("submit", i)}
+                      />
                     </View>
                   ))}
                   <Body style={{ marginBottom: 0 }}>
@@ -593,8 +655,8 @@ export function WorkerHomeScreen({ route, navigation }) {
         </>
       ) : null}
 
-      {(adding || removing) ? (
-        <Body style={{ marginTop: 4 }}>Updating watchlist...</Body>
+      {(adding || removing || creatingUploadUrl) ? (
+        <Body style={{ marginTop: 4 }}>Syncing changes...</Body>
       ) : null}
     </Screen>
   );

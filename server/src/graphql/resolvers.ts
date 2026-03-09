@@ -1,5 +1,8 @@
 import argon2 from "argon2";
+import { randomUUID } from "node:crypto";
 import { GraphQLScalarType, Kind } from "graphql";
+import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import type { AppContext } from "./context.js";
 
 import {
@@ -78,6 +81,98 @@ const normalizeImageUrls = (urls) => {
     .filter(Boolean);
 };
 
+const mapAuthDatabaseError = (error, fallbackMessage) => {
+  const code = error?.code;
+  const message = String(error?.message || "").toLowerCase();
+  const isDbUnavailable =
+    code === "P1000" ||
+    code === "P1001" ||
+    code === "P1010" ||
+    code === "EPERM" ||
+    message.includes("connection refused") ||
+    message.includes("can't reach database server") ||
+    message.includes("failed to connect");
+
+  if (isDbUnavailable) {
+    return new Error(
+      "Authentication is temporarily unavailable because the database is offline. Please try again shortly.",
+    );
+  }
+
+  return new Error(fallbackMessage);
+};
+
+const S3_DEFAULT_UPLOAD_FOLDER_PUBLIC = "users";
+const S3_DEFAULT_UPLOAD_FOLDER_PRIVATE = "temp";
+
+const s3Region = process.env.AWS_REGION || "";
+const s3PublicBucket = process.env.S3_PUBLIC_BUCKET || "";
+const s3PrivateBucket = process.env.S3_PRIVATE_BUCKET || "";
+const s3PublicBaseUrl = process.env.S3_PUBLIC_BASE_URL || "";
+const s3MaxImageUploadBytes = Number.parseInt(
+  process.env.S3_MAX_IMAGE_UPLOAD_BYTES || "10485760",
+  10,
+);
+const s3SignedUrlExpiresSeconds = Number.parseInt(
+  process.env.S3_SIGNED_URL_EXPIRES_SECONDS || "900",
+  10,
+);
+const s3AllowedImageTypes = new Set(
+  String(
+    process.env.S3_ALLOWED_IMAGE_TYPES ||
+      "image/jpeg,image/jpg,image/png,image/webp,image/heic,image/heif",
+  )
+    .split(",")
+    .map((item) => item.trim().toLowerCase())
+    .filter(Boolean),
+);
+const s3Client =
+  s3Region && (s3PublicBucket || s3PrivateBucket)
+    ? new S3Client({ region: s3Region })
+    : null;
+
+const assertS3UploadConfig = () => {
+  if (!s3Region || !s3Client || !s3PublicBucket || !s3PrivateBucket) {
+    throw new Error(
+      "S3 upload is not configured. Set AWS_REGION, S3_PUBLIC_BUCKET, and S3_PRIVATE_BUCKET.",
+    );
+  }
+};
+
+const sanitizeUploadFolder = (folder, bucket) => {
+  const fallback =
+    bucket === "PUBLIC" ? S3_DEFAULT_UPLOAD_FOLDER_PUBLIC : S3_DEFAULT_UPLOAD_FOLDER_PRIVATE;
+  const normalized =
+    typeof folder === "string" && folder.trim()
+      ? folder.trim().replace(/^\/+|\/+$/g, "")
+      : fallback;
+  return normalized.replace(/[^a-zA-Z0-9/_-]/g, "_");
+};
+
+const extensionFromContentType = (contentType) => {
+  if (contentType === "image/png") return "png";
+  if (contentType === "image/webp") return "webp";
+  if (contentType === "image/heic") return "heic";
+  if (contentType === "image/heif") return "heif";
+  return "jpg";
+};
+
+const resolveBucketName = (bucket) => {
+  if (bucket === "PUBLIC") return s3PublicBucket;
+  if (bucket === "PRIVATE") return s3PrivateBucket;
+  throw new Error("Unsupported upload bucket.");
+};
+
+const buildS3FileUrl = (bucket, objectKey) => {
+  if (bucket === "PUBLIC") {
+    if (s3PublicBaseUrl) {
+      return `${s3PublicBaseUrl.replace(/\/+$/, "")}/${objectKey}`;
+    }
+    return `https://${s3PublicBucket}.s3.${s3Region}.amazonaws.com/${objectKey}`;
+  }
+  return `s3://${s3PrivateBucket}/${objectKey}`;
+};
+
 // Central auth guard for resolvers that require a logged-in user.
 const requireUserId = (context: AppContext): string => {
   if (!context.userId) throw new Error("Unauthorized.");
@@ -153,6 +248,7 @@ const ensureCompanyRole = async (companyId, userId, allowedRoles) => {
 // Dynamic pricing/stars are computed on read; no cron/job mutates Gig price over time.
 const PRICE_BUMP_ACTIVE_STATUSES = new Set(["DRAFT", "OPEN"]);
 const TIER_ORDER = ["COPPER", "BRONZE", "SILVER", "GOLD", "PLATINUM", "DIAMOND"];
+const EXPIRED_GIG_REPOST_STARS_INCREMENT = 5;
 const TIER_THRESHOLDS = [
   { minimumFiveStarCompletions: 500, tier: "DIAMOND" },
   { minimumFiveStarCompletions: 250, tier: "PLATINUM" },
@@ -231,6 +327,63 @@ const computeRepostBonusStars = (gig) => {
 
 const computeTotalStarsReward = (gig) =>
   coerceNonNegativeInt(gig.baseStars, 0) + computeAgeBonusStars(gig) + computeRepostBonusStars(gig);
+
+const computeGigDurationMs = (gig) => {
+  const end = gig?.endsAt ? new Date(gig.endsAt) : null;
+  if (!end || Number.isNaN(end.getTime())) return null;
+
+  const startCandidate = gig?.startsAt ? new Date(gig.startsAt) : gig?.createdAt ? new Date(gig.createdAt) : null;
+  if (!startCandidate || Number.isNaN(startCandidate.getTime())) return null;
+
+  const durationMs = end.getTime() - startCandidate.getTime();
+  if (!Number.isFinite(durationMs) || durationMs <= 0) return null;
+  return durationMs;
+};
+
+const repostExpiredOpenGigs = async (now = new Date()) => {
+  const expiredOpenGigs = await prisma.gig.findMany({
+    where: {
+      status: "OPEN",
+      endsAt: { lt: now },
+      assignments: { none: {} },
+    },
+    select: {
+      id: true,
+      startsAt: true,
+      endsAt: true,
+      createdAt: true,
+    },
+  });
+
+  if (expiredOpenGigs.length === 0) return 0;
+
+  const updateOps = expiredOpenGigs
+    .map((gig) => {
+      const durationMs = computeGigDurationMs(gig);
+      if (!durationMs) return null;
+
+      return prisma.gig.updateMany({
+        where: {
+          id: gig.id,
+          status: "OPEN",
+          endsAt: { lt: now },
+          assignments: { none: {} },
+        },
+        data: {
+          startsAt: now,
+          endsAt: new Date(now.getTime() + durationMs),
+          baseStars: { increment: EXPIRED_GIG_REPOST_STARS_INCREMENT },
+          repostCount: { increment: 1 },
+        },
+      });
+    })
+    .filter((op) => op !== null);
+
+  if (updateOps.length === 0) return 0;
+
+  const results = await prisma.$transaction(updateOps);
+  return results.reduce((total, row) => total + (row?.count || 0), 0);
+};
 
 const getTierRank = (tier) => TIER_ORDER.indexOf(tier);
 
@@ -640,6 +793,7 @@ export const resolvers = {
 
     gigs: async (_parent, args, context) => {
       const actorUserId = requireUserId(context);
+      await repostExpiredOpenGigs();
       const memberships = await prisma.member.findMany({
         where: { userId: actorUserId },
         select: { companyId: true },
@@ -1081,35 +1235,46 @@ export const resolvers = {
 
   Mutation: {
     register: async (_parent, args) => {
-      const { email, password } = args;
+      try {
+        const { email, password } = args;
 
-      validateEmail(email);
-      validatePassword(password);
+        validateEmail(email);
+        validatePassword(password);
 
-      const existing = await prisma.user.findUnique({ where: { email: email.trim() } });
-      if (existing) throw new Error("Email already in use.");
+        const existing = await prisma.user.findUnique({ where: { email: email.trim() } });
+        if (existing) throw new Error("Email already in use.");
 
-      const passwordHash = await argon2.hash(password);
+        const passwordHash = await argon2.hash(password);
 
-      const user = await prisma.user.create({
-        data: { email: email.trim(), passwordHash },
-        include: userInclude,
-      });
+        const user = await prisma.user.create({
+          data: { email: email.trim(), passwordHash },
+          include: userInclude,
+        });
 
-      const accessToken = signAccessToken({ userId: user.id });
+        const accessToken = signAccessToken({ userId: user.id });
 
-      const rawRefresh = generateRefreshToken();
-      const tokenHash = hashRefreshToken(rawRefresh);
+        const rawRefresh = generateRefreshToken();
+        const tokenHash = hashRefreshToken(rawRefresh);
 
-      await prisma.refreshToken.create({
-        data: {
-          userId: user.id,
-          tokenHash,
-          expiresAt: refreshTokenExpiryDate(),
-        },
-      });
+        await prisma.refreshToken.create({
+          data: {
+            userId: user.id,
+            tokenHash,
+            expiresAt: refreshTokenExpiryDate(),
+          },
+        });
 
-      return { accessToken, refreshToken: rawRefresh, user };
+        return { accessToken, refreshToken: rawRefresh, user };
+      } catch (error) {
+        if (
+          error?.message === "Email already in use." ||
+          error?.message === "Invalid email address." ||
+          error?.message?.startsWith("Password must")
+        ) {
+          throw error;
+        }
+        throw mapAuthDatabaseError(error, "Unable to register right now.");
+      }
     },
 
     requestPasswordReset: async (_parent, args) => {
@@ -2140,10 +2305,36 @@ export const resolvers = {
       return prisma.$transaction(async (tx) => {
         const gig = await tx.gig.findUnique({
           where: { id: gigId },
-          select: { id: true, status: true },
+          select: { id: true, status: true, startsAt: true, endsAt: true, createdAt: true },
         });
         if (!gig) throw new Error("Gig not found.");
-        if (gig.status !== "OPEN") throw new Error("Gig is not open for claiming.");
+
+        if (gig.status === "OPEN" && gig.endsAt && new Date(gig.endsAt) < new Date()) {
+          const durationMs = computeGigDurationMs(gig);
+          if (durationMs) {
+            await tx.gig.updateMany({
+              where: {
+                id: gigId,
+                status: "OPEN",
+                endsAt: { lt: new Date() },
+                assignments: { none: {} },
+              },
+              data: {
+                startsAt: new Date(),
+                endsAt: new Date(Date.now() + durationMs),
+                baseStars: { increment: EXPIRED_GIG_REPOST_STARS_INCREMENT },
+                repostCount: { increment: 1 },
+              },
+            });
+          }
+        }
+
+        const refreshedGig = await tx.gig.findUnique({
+          where: { id: gigId },
+          select: { id: true, status: true },
+        });
+        if (!refreshedGig) throw new Error("Gig not found.");
+        if (refreshedGig.status !== "OPEN") throw new Error("Gig is not open for claiming.");
 
         const existingAssignment = await tx.gigAssignment.findFirst({
           where: { gigId },
@@ -2255,6 +2446,60 @@ export const resolvers = {
 
         return updated;
       });
+    },
+
+    createImageUploadUrl: async (_parent, args, context) => {
+      const actorUserId = requireUserId(context);
+      assertS3UploadConfig();
+
+      const bucket = String(args.bucket || "").trim().toUpperCase();
+      const mimeType = String(args.mimeType || "").trim().toLowerCase();
+      const size = Number(args.size || 0);
+      const expiresIn = Number.isFinite(s3SignedUrlExpiresSeconds) && s3SignedUrlExpiresSeconds > 0
+        ? Math.min(Math.max(s3SignedUrlExpiresSeconds, 60), 3600)
+        : 900;
+
+      if (!mimeType.startsWith("image/")) {
+        throw new Error("Only image MIME types are supported.");
+      }
+      if (s3AllowedImageTypes.size > 0 && !s3AllowedImageTypes.has(mimeType)) {
+        throw new Error(`Image type ${mimeType} is not allowed.`);
+      }
+      if (!Number.isFinite(size) || size <= 0) {
+        throw new Error("Image size must be provided in bytes.");
+      }
+      if (Number.isFinite(s3MaxImageUploadBytes) && s3MaxImageUploadBytes > 0 && size > s3MaxImageUploadBytes) {
+        throw new Error(`Image size exceeds maximum allowed (${s3MaxImageUploadBytes} bytes).`);
+      }
+
+      const bucketName = resolveBucketName(bucket);
+      const folder = sanitizeUploadFolder(args.folder, bucket);
+      const extension = extensionFromContentType(mimeType);
+      const objectKey = `${folder}/${actorUserId}/${Date.now()}-${randomUUID()}.${extension}`;
+
+      const uploadUrl = await getSignedUrl(
+        s3Client!,
+        new PutObjectCommand({
+          Bucket: bucketName,
+          Key: objectKey,
+          ContentType: mimeType,
+          Metadata: {
+            uploadedByUserId: actorUserId,
+          },
+        }),
+        { expiresIn },
+      );
+
+      return {
+        uploadUrl,
+        fileUrl: buildS3FileUrl(bucket, objectKey),
+        bucket: bucketName,
+        key: objectKey,
+        mimeType,
+        size,
+        uploadedByUserId: actorUserId,
+        expiresIn,
+      };
     },
 
     createGigReview: async (_parent, args, context) => {
@@ -2679,32 +2924,39 @@ export const resolvers = {
     },
 
     login: async (_parent, args) => {
-      const { email, password } = args;
+      try {
+        const { email, password } = args;
 
-      const user = await prisma.user.findUnique({
-        where: { email },
-        include: userInclude,
-      });
+        const user = await prisma.user.findUnique({
+          where: { email },
+          include: userInclude,
+        });
 
-      if (!user) throw new Error("Invalid email or password.");
+        if (!user) throw new Error("Invalid email or password.");
 
-      const ok = await argon2.verify(user.passwordHash, password);
-      if (!ok) throw new Error("Invalid email or password.");
+        const ok = await argon2.verify(user.passwordHash, password);
+        if (!ok) throw new Error("Invalid email or password.");
 
-      const accessToken = signAccessToken({ userId: user.id });
+        const accessToken = signAccessToken({ userId: user.id });
 
-      const rawRefresh = generateRefreshToken();
-      const tokenHash = hashRefreshToken(rawRefresh);
+        const rawRefresh = generateRefreshToken();
+        const tokenHash = hashRefreshToken(rawRefresh);
 
-      await prisma.refreshToken.create({
-        data: {
-          userId: user.id,
-          tokenHash,
-          expiresAt: refreshTokenExpiryDate(),
-        },
-      });
+        await prisma.refreshToken.create({
+          data: {
+            userId: user.id,
+            tokenHash,
+            expiresAt: refreshTokenExpiryDate(),
+          },
+        });
 
-      return { accessToken, refreshToken: rawRefresh, user };
+        return { accessToken, refreshToken: rawRefresh, user };
+      } catch (error) {
+        if (error?.message === "Invalid email or password.") {
+          throw error;
+        }
+        throw mapAuthDatabaseError(error, "Unable to sign in right now.");
+      }
     },
 
     refreshToken: async (_parent, args) => {

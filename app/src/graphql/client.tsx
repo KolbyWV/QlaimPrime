@@ -245,6 +245,18 @@ export function createApolloClient({
             myAssignments: {
               merge: false,
             },
+            myStarsTransactions: {
+              merge: false,
+            },
+            myMoneyTransactions: {
+              merge: false,
+            },
+            starsTransactions: {
+              merge: false,
+            },
+            moneyTransactions: {
+              merge: false,
+            },
           },
         },
         Gig: {

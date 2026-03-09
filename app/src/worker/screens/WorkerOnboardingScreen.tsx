@@ -1,11 +1,13 @@
 import React, { useState } from "react";
-import { Text } from "react-native";
+import { Image, Text, View } from "react-native";
 import { useMutation } from "@apollo/client/react";
+import * as ImagePicker from "expo-image-picker";
 
 import { useSession } from "../../auth/session";
-import { CREATE_PROFILE_MUTATION } from "../../graphql/domain";
+import { CREATE_IMAGE_UPLOAD_URL_MUTATION, CREATE_PROFILE_MUTATION } from "../../graphql/domain";
 import { useAppTheme } from "../../ui/theme";
 import { Body, Button, Card, Field, Heading, Screen } from "../../ui/components";
+import { uploadImageWithPresignedUrl } from "../../utils/imageUpload";
 
 export function WorkerOnboardingScreen() {
   const { theme } = useAppTheme();
@@ -14,6 +16,7 @@ export function WorkerOnboardingScreen() {
   const [lastName, setLastName] = useState("");
   const [username, setUsername] = useState("");
   const [zipcode, setZipcode] = useState("");
+  const [avatarUrl, setAvatarUrl] = useState("");
   const [error, setError] = useState(null);
 
   const [createProfile, { loading }] = useMutation(CREATE_PROFILE_MUTATION, {
@@ -24,6 +27,9 @@ export function WorkerOnboardingScreen() {
       setError(nextError.message || "Failed to create profile.");
     },
   });
+  const [createImageUploadUrl, { loading: uploadingAvatar }] = useMutation(
+    CREATE_IMAGE_UPLOAD_URL_MUTATION,
+  );
 
   const onCreate = async () => {
     setError(null);
@@ -34,6 +40,7 @@ export function WorkerOnboardingScreen() {
           lastName,
           username,
           zipcode,
+          avatarUrl: avatarUrl || null,
         },
       });
     } catch {
@@ -73,6 +80,77 @@ export function WorkerOnboardingScreen() {
         />
         <Field label="Username" value={username} onChangeText={setUsername} placeholder="janedoe" />
         <Field label="Zipcode" value={zipcode} onChangeText={setZipcode} placeholder="73104" />
+        <Text
+          style={{
+            color: theme.colors.text,
+            fontSize: 20,
+            fontWeight: "700",
+            marginBottom: 8,
+          }}
+        >
+          Profile photo (optional)
+        </Text>
+        <View
+          style={{
+            alignItems: "center",
+            justifyContent: "center",
+            marginBottom: 16,
+          }}
+        >
+          {avatarUrl ? (
+            <Image
+              source={{ uri: avatarUrl }}
+              style={{
+                width: 96,
+                height: 96,
+                borderRadius: 48,
+                borderWidth: 1,
+                borderColor: theme.colors.border,
+              }}
+            />
+          ) : (
+            <View
+              style={{
+                width: 96,
+                height: 96,
+                borderRadius: 48,
+                borderWidth: 1,
+                borderColor: theme.colors.border,
+                backgroundColor: theme.colors.card,
+              }}
+            />
+          )}
+        </View>
+        <Button
+          label={uploadingAvatar ? "Uploading avatar..." : "Upload Avatar"}
+          variant="secondary"
+          loading={uploadingAvatar}
+          onPress={async () => {
+            try {
+              setError(null);
+              const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+              if (!permission.granted) {
+                setError("Photo library permission is required to upload an avatar.");
+                return;
+              }
+              const result = await ImagePicker.launchImageLibraryAsync({
+                mediaTypes: "images",
+                allowsEditing: true,
+                quality: 0.8,
+              });
+              if (result.canceled || !result.assets?.[0]?.uri) return;
+              const uploadedUrl = await uploadImageWithPresignedUrl({
+                localUri: result.assets[0].uri,
+                bucket: "PUBLIC",
+                folder: "users/avatars",
+                createImageUploadUrl,
+              });
+              setAvatarUrl(uploadedUrl);
+            } catch (nextError) {
+              setError(nextError?.message || "Unable to upload avatar.");
+            }
+          }}
+        />
 
         {error ? <Text style={{ color: theme.colors.danger }}>{error}</Text> : null}
 

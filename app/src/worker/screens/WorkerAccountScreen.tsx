@@ -4,7 +4,9 @@ import { useQuery } from "@apollo/client/react";
 import { useFocusEffect } from "@react-navigation/native";
 
 import { useSession } from "../../auth/session";
-import { MY_MONEY_TRANSACTIONS_QUERY } from "../../graphql/domain";
+import {
+  MY_MONEY_TRANSACTIONS_QUERY,
+} from "../../graphql/domain";
 import { Button, Card, Heading, Screen, SectionTitle } from "../../ui/components";
 import { UserSummaryCard } from "../../ui/domain";
 import { useAppTheme } from "../../ui/theme";
@@ -38,8 +40,10 @@ export function WorkerAccountScreen({ navigation }) {
       <UserSummaryCard
         name={`${me?.profile?.firstName || ""} ${me?.profile?.lastName || ""}`.trim() || me?.email || "Profile"}
         username={me?.profile?.username || "username"}
+        avatarUrl={me?.profile?.avatarUrl || ""}
         tier={me?.profile?.tier || "COPPER"}
         starsBalance={me?.profile?.starsBalance || 0}
+        gigCount={me?.assignments?.length || 0}
         ratingAvg={me?.profile?.ratingAvg ?? 5}
         moneyBalanceCents={balanceCents}
       />
@@ -48,6 +52,11 @@ export function WorkerAccountScreen({ navigation }) {
 
       <SectionTitle>Account actions</SectionTitle>
       <Card>
+        <Button
+          label="Update Profile"
+          variant="secondary"
+          onPress={() => navigation.navigate("UpdateProfile")}
+        />
         <Button
           label="Gig History"
           variant="secondary"

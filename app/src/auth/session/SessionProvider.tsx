@@ -10,6 +10,7 @@ import React, {
 import { Alert, Platform } from "react-native";
 
 import { createApolloClient } from "../../graphql/client";
+import { GRAPHQL_URL } from "../../graphql/config";
 import {
   LOGIN_MUTATION,
   LOGOUT_MUTATION,
@@ -37,6 +38,42 @@ const TIER_ORDER = ["COPPER", "BRONZE", "SILVER", "GOLD", "PLATINUM", "DIAMOND"]
 
 function tierRank(tier) {
   return TIER_ORDER.indexOf(tier);
+}
+
+function normalizeAuthErrorMessage(raw, fallback) {
+  const message = String(raw || "").trim();
+  if (!message) return fallback;
+
+  const lower = message.toLowerCase();
+  if (
+    lower.includes("invalid `prisma.") ||
+    lower.includes("database is offline") ||
+    lower.includes("can't reach database server") ||
+    lower.includes("connection refused") ||
+    lower.includes("failed to connect") ||
+    lower.includes("eperm")
+  ) {
+    return "Authentication is temporarily unavailable. Please try again shortly.";
+  }
+  if (lower.includes("too many attempts") || lower.includes("status code 429")) {
+    return "Too many attempts right now. Please wait 15 minutes and try again.";
+  }
+  if (lower.includes("network") || lower.includes("failed to fetch")) {
+    return "Network issue while contacting the server. Check connection and try again.";
+  }
+  return message;
+}
+
+function missingTokenMessage(action) {
+  const base =
+    action === "register"
+      ? "Account was created, but the server did not return session tokens."
+      : "Sign-in succeeded, but the server did not return session tokens.";
+
+  if (__DEV__) {
+    return `${base} Check GraphQL endpoint: ${GRAPHQL_URL}`;
+  }
+  return `${base} Please try again.`;
 }
 
 export function SessionProvider({ children }) {
@@ -129,21 +166,35 @@ export function SessionProvider({ children }) {
 
   const signIn = useCallback(
     async ({ email, password }) => {
-      const { data, errors } = await apolloClient.mutate({
-        mutation: LOGIN_MUTATION,
-        variables: {
-          email: email.trim(),
-          password,
-        },
-      });
+      let data;
+      let errors;
+      try {
+        const result = await apolloClient.mutate({
+          mutation: LOGIN_MUTATION,
+          variables: {
+            email: email.trim(),
+            password,
+          },
+        });
+        data = result?.data;
+        errors = result?.errors;
+      } catch (error) {
+        throw new Error(
+          normalizeAuthErrorMessage(error?.message, "Unable to sign in."),
+        );
+      }
 
       if (errors?.length) {
-        throw new Error(errors[0].message || "Unable to sign in.");
+        throw new Error(
+          normalizeAuthErrorMessage(errors[0].message, "Unable to sign in."),
+        );
       }
 
       const payload = data?.login;
       if (!payload?.accessToken || !payload?.refreshToken) {
-        throw new Error("Login response did not include tokens.");
+        throw new Error(
+          normalizeAuthErrorMessage(missingTokenMessage("login"), "Unable to sign in."),
+        );
       }
 
       await applyTokens(
@@ -171,21 +222,57 @@ export function SessionProvider({ children }) {
 
   const register = useCallback(
     async ({ email, password }) => {
-      const { data, errors } = await apolloClient.mutate({
-        mutation: REGISTER_MUTATION,
-        variables: {
-          email: email.trim(),
-          password,
-        },
-      });
-
-      if (errors?.length) {
-        throw new Error(errors[0].message || "Unable to register.");
+      let data;
+      let errors;
+      try {
+        const result = await apolloClient.mutate({
+          mutation: REGISTER_MUTATION,
+          variables: {
+            email: email.trim(),
+            password,
+          },
+        });
+        data = result?.data;
+        errors = result?.errors;
+      } catch (error) {
+        throw new Error(
+          normalizeAuthErrorMessage(error?.message, "Unable to create account."),
+        );
       }
 
-      const payload = data?.register;
+      if (errors?.length) {
+        throw new Error(
+          normalizeAuthErrorMessage(errors[0].message, "Unable to create account."),
+        );
+      }
+
+      let payload = data?.register || null;
       if (!payload?.accessToken || !payload?.refreshToken) {
-        throw new Error("Registration response did not include tokens.");
+        // Fallback: account may have been created even if register response payload is incomplete.
+        const loginResult = await apolloClient.mutate({
+          mutation: LOGIN_MUTATION,
+          variables: {
+            email: email.trim(),
+            password,
+          },
+        });
+
+        if (loginResult?.errors?.length) {
+          throw new Error(
+            normalizeAuthErrorMessage(
+              loginResult.errors[0].message,
+              "Account created, but sign-in did not start automatically. Please sign in.",
+            ),
+          );
+        }
+
+        payload = loginResult?.data?.login || null;
+      }
+
+      if (!payload?.accessToken || !payload?.refreshToken) {
+        throw new Error(
+          missingTokenMessage("register"),
+        );
       }
 
       await applyTokens(

@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "Qlaim",
-    "slug": "app",
+    "slug": "prime",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -16,14 +16,14 @@
     ],
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.kkinsey0.qlaim"
+      "bundleIdentifier": "com.kkinsey0.qlaimprime"
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "package": "com.kkinsey0.qlaim"
+      "package": "com.kkinsey0.qlaimprime"
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -33,6 +33,12 @@
     ],
     "runtimeVersion": {
       "policy": "appVersion"
-    }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "a95c8c6d-37e8-4e12-a500-328393c672c1"
+      }
+    },
+    "owner": "kkinsey0"
   }
 }

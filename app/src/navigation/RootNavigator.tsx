@@ -28,6 +28,7 @@ import { WorkerHomeScreen } from "../worker/screens/WorkerHomeScreen";
 import { WorkerOnboardingScreen } from "../worker/screens/WorkerOnboardingScreen";
 import { WorkerPastAssignmentsScreen } from "../worker/screens/WorkerPastAssignmentsScreen";
 import { WorkerShopScreen } from "../worker/screens/WorkerShopScreen";
+import { WorkerUpdateProfileScreen } from "../worker/screens/WorkerUpdateProfileScreen";
 import { WorkerWalletScreen } from "../worker/screens/WorkerWalletScreen";
 
 const AuthStack = createNativeStackNavigator();
@@ -164,6 +165,10 @@ function WorkerAccountNavigator() {
       <WorkerAccountStack.Screen
         name="Transactions"
         component={WorkerWalletScreen}
+      />
+      <WorkerAccountStack.Screen
+        name="UpdateProfile"
+        component={WorkerUpdateProfileScreen}
       />
     </WorkerAccountStack.Navigator>
   );

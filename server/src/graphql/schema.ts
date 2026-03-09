@@ -140,6 +140,12 @@ export const typeDefs = `#graphql
       startImageUrls: [String!]
       endImageUrls: [String!]
     ): GigAssignment
+    createImageUploadUrl(
+      bucket: S3UploadBucket!
+      mimeType: String!
+      size: Int!
+      folder: String
+    ): PresignedUpload
     createGigReview(
       assignmentId: ID!
       starsRating: Int!
@@ -227,6 +233,22 @@ export const typeDefs = `#graphql
     accessToken: String
     refreshToken: String
     user: User
+  }
+
+  type PresignedUpload {
+    uploadUrl: String
+    fileUrl: String
+    bucket: String
+    key: String
+    mimeType: String
+    size: Int
+    uploadedByUserId: ID
+    expiresIn: Int
+  }
+
+  enum S3UploadBucket {
+    PUBLIC
+    PRIVATE
   }
 
   type Profile {

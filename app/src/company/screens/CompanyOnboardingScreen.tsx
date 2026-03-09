@@ -1,9 +1,11 @@
 import React, { useLayoutEffect, useState } from "react";
 import { Pressable, Text } from "react-native";
 import { useMutation, useQuery } from "@apollo/client/react";
+import * as ImagePicker from "expo-image-picker";
 
 import { useSession } from "../../auth/session";
 import {
+  CREATE_IMAGE_UPLOAD_URL_MUTATION,
   COMPANY_DIRECTORY_QUERY,
   CREATE_COMPANY_MUTATION,
   MY_COMPANY_MEMBERSHIP_REQUESTS_QUERY,
@@ -11,6 +13,7 @@ import {
 } from "../../graphql/domain";
 import { useAppTheme } from "../../ui/theme";
 import { Body, Button, Card, Field, Heading, Screen } from "../../ui/components";
+import { uploadImageWithPresignedUrl } from "../../utils/imageUpload";
 
 export function CompanyOnboardingScreen({ navigation }) {
   const { theme } = useAppTheme();
@@ -55,6 +58,9 @@ export function CompanyOnboardingScreen({ navigation }) {
       setJoinError(nextError.message || "Failed to send membership request.");
     },
   });
+  const [createImageUploadUrl, { loading: uploadingLogo }] = useMutation(
+    CREATE_IMAGE_UPLOAD_URL_MUTATION,
+  );
 
   useLayoutEffect(() => {
     navigation.setOptions({
@@ -123,6 +129,15 @@ export function CompanyOnboardingScreen({ navigation }) {
       <Body style={{ marginBottom: 12 }}>
         Company mode requires membership. Create a company or request to join one.
       </Body>
+      <Pressable
+        onPress={() => switchMode("worker")}
+        hitSlop={8}
+        style={{ marginBottom: 14, alignSelf: "flex-start" }}
+      >
+        <Text style={{ color: theme.colors.primary, fontSize: 16, fontWeight: "700" }}>
+          Switch to Contractor Mode
+        </Text>
+      </Pressable>
 
       <Card>
         <Field label="Company name" value={name} onChangeText={setName} placeholder="Prime Staffing" />
@@ -131,6 +146,36 @@ export function CompanyOnboardingScreen({ navigation }) {
           value={logoUrl}
           onChangeText={setLogoUrl}
           placeholder="https://example.com/logo.png"
+        />
+        <Button
+          label={uploadingLogo ? "Uploading logo..." : "Upload Company Logo"}
+          variant="secondary"
+          loading={uploadingLogo}
+          onPress={async () => {
+            try {
+              setCreateError(null);
+              const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+              if (!permission.granted) {
+                setCreateError("Photo library permission is required to upload a logo.");
+                return;
+              }
+              const result = await ImagePicker.launchImageLibraryAsync({
+                mediaTypes: "images",
+                allowsEditing: true,
+                quality: 0.85,
+              });
+              if (result.canceled || !result.assets?.[0]?.uri) return;
+              const uploadedUrl = await uploadImageWithPresignedUrl({
+                localUri: result.assets[0].uri,
+                bucket: "PUBLIC",
+                folder: "companies/logos",
+                createImageUploadUrl,
+              });
+              setLogoUrl(uploadedUrl);
+            } catch (nextError) {
+              setCreateError(nextError?.message || "Unable to upload company logo.");
+            }
+          }}
         />
 
         {createError ? <Text style={{ color: theme.colors.danger }}>{createError}</Text> : null}

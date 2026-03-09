@@ -1,5 +1,5 @@
 import React, { useCallback, useMemo, useState } from "react";
-import { RefreshControl, Text } from "react-native";
+import { RefreshControl, Text, View } from "react-native";
 import { useMutation, useQuery } from "@apollo/client/react";
 import { useFocusEffect } from "@react-navigation/native";
 
@@ -29,6 +29,7 @@ function matchesProduct(product, search) {
 export function WorkerShopScreen() {
   const { theme } = useAppTheme();
   const { me, refreshMe } = useSession();
+  const shopLocked = true;
   const [search, setSearch] = useState("");
   const [operationError, setOperationError] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -119,54 +120,80 @@ export function WorkerShopScreen() {
         />
       }
     >
-      <Heading style={{ fontSize: 32, marginBottom: 10 }}>STAR SHOP</Heading>
-      <UserSummaryCard
-        name={`${me?.profile?.firstName || ""} ${me?.profile?.lastName || ""}`.trim() || me?.email || "Profile"}
-        username={me?.profile?.username || "username"}
-        tier={me?.profile?.tier || "COPPER"}
-        starsBalance={me?.profile?.starsBalance || 0}
-        starsOnly
-      />
+      <View style={{ position: "relative" }}>
+        <View pointerEvents={shopLocked ? "none" : "auto"} style={shopLocked ? { opacity: 0.35 } : null}>
+          <Heading style={{ fontSize: 32, marginBottom: 10 }}>STAR SHOP</Heading>
+          <UserSummaryCard
+            name={`${me?.profile?.firstName || ""} ${me?.profile?.lastName || ""}`.trim() || me?.email || "Profile"}
+            username={me?.profile?.username || "username"}
+            avatarUrl={me?.profile?.avatarUrl || ""}
+            tier={me?.profile?.tier || "COPPER"}
+            starsBalance={me?.profile?.starsBalance || 0}
+            gigCount={me?.assignments?.length || 0}
+            starsOnly
+          />
 
-      <SearchInput value={search} onChangeText={setSearch} placeholder="Search" />
+          <SearchInput value={search} onChangeText={setSearch} placeholder="Search" />
 
-      {productsError ? <Text style={{ color: theme.colors.danger }}>{productsError.message}</Text> : null}
-      {purchasesError ? <Text style={{ color: theme.colors.danger }}>{purchasesError.message}</Text> : null}
-      {operationError ? <Text style={{ color: theme.colors.danger }}>{operationError}</Text> : null}
+          {productsError ? <Text style={{ color: theme.colors.danger }}>{productsError.message}</Text> : null}
+          {purchasesError ? <Text style={{ color: theme.colors.danger }}>{purchasesError.message}</Text> : null}
+          {operationError ? <Text style={{ color: theme.colors.danger }}>{operationError}</Text> : null}
 
-      <SectionTitle>Membership upgrades</SectionTitle>
-      {membershipProducts.map((product) => (
-        <ShopProductCard
-          key={product.id}
-          product={product}
-          variant="membership"
-          onPurchase={() => purchaseProduct({ variables: { productId: product.id } })}
-          loading={purchasing}
-          owned={ownedProductIds.has(product.id)}
-        />
-      ))}
-      {membershipProducts.length === 0 ? (
-        <Card>
-          <Body>No membership products found.</Body>
-        </Card>
-      ) : null}
+          <SectionTitle>Membership upgrades</SectionTitle>
+          {membershipProducts.map((product) => (
+            <ShopProductCard
+              key={product.id}
+              product={product}
+              variant="membership"
+              onPurchase={() => purchaseProduct({ variables: { productId: product.id } })}
+              loading={purchasing}
+              owned={ownedProductIds.has(product.id)}
+            />
+          ))}
+          {membershipProducts.length === 0 ? (
+            <Card>
+              <Body>No membership products found.</Body>
+            </Card>
+          ) : null}
 
-      <SectionTitle style={{ marginTop: 8 }}>Cash bonuses</SectionTitle>
-      {bonusProducts.map((product) => (
-        <ShopProductCard
-          key={product.id}
-          product={product}
-          variant="bonus"
-          onPurchase={() => purchaseProduct({ variables: { productId: product.id } })}
-          loading={purchasing}
-          owned={ownedProductIds.has(product.id)}
-        />
-      ))}
-      {bonusProducts.length === 0 ? (
-        <Card>
-          <Body>No bonus products found.</Body>
-        </Card>
-      ) : null}
+          <SectionTitle style={{ marginTop: 8 }}>Cash bonuses</SectionTitle>
+          {bonusProducts.map((product) => (
+            <ShopProductCard
+              key={product.id}
+              product={product}
+              variant="bonus"
+              onPurchase={() => purchaseProduct({ variables: { productId: product.id } })}
+              loading={purchasing}
+              owned={ownedProductIds.has(product.id)}
+            />
+          ))}
+          {bonusProducts.length === 0 ? (
+            <Card>
+              <Body>No bonus products found.</Body>
+            </Card>
+          ) : null}
+        </View>
+
+        {shopLocked ? (
+          <View
+            style={{
+              position: "absolute",
+              top: 180,
+              left: 0,
+              right: 0,
+              alignItems: "center",
+              paddingHorizontal: 12,
+            }}
+          >
+            <Card style={{ width: "100%", maxWidth: 420, alignItems: "center", paddingVertical: 18 }}>
+              <Heading style={{ fontSize: 26, marginBottom: 6 }}>Under Construction</Heading>
+              <Body style={{ textAlign: "center", marginBottom: 0 }}>
+                Star Shop purchases are temporarily locked while we finish updates.
+              </Body>
+            </Card>
+          </View>
+        ) : null}
+      </View>
     </Screen>
   );
 }

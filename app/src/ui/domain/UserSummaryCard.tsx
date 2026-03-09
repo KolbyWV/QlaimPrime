@@ -1,5 +1,5 @@
 import React from "react";
-import { Platform, Text, View, useWindowDimensions } from "react-native";
+import { Image, Platform, Text, View, useWindowDimensions } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 
 import { useAppTheme } from "../theme";
@@ -31,8 +31,10 @@ function getTierBubbleColor(tier, theme) {
 export function UserSummaryCard({
   name,
   username,
+  avatarUrl,
   tier,
   starsBalance = 0,
+  gigCount = 0,
   ratingAvg = null,
   moneyBalanceCents = null,
   starsOnly = false,
@@ -53,9 +55,49 @@ export function UserSummaryCard({
   const tierFontSize = isMobile ? 13 : 16;
   const tierPaddingX = isMobile ? 8 : 10;
   const tierPaddingY = isMobile ? 4 : 5;
-  const statGap = isMobile ? 6 : 8;
+  const avatarSize = isMobile ? 56 : 72;
+  const tierBadgeHeight = tier ? tierFontSize + tierPaddingY * 2 : 0;
+  const tierRowSpacing = tier ? 10 : 0;
+  const bottomStatReserve = tierBadgeHeight + tierRowSpacing;
+  const baseColumnHeight = isMobile ? 112 : 128;
+  const columnHeight = baseColumnHeight + bottomStatReserve;
   const ratingValue = Number.isFinite(Number(ratingAvg)) ? Number(ratingAvg).toFixed(1) : "0.0";
   const tierBubbleColor = getTierBubbleColor(tier, theme);
+
+  const rightStats = [
+    ...(!starsOnly
+      ? [
+          {
+            label: "Rating",
+            icon: "star",
+            iconColor: theme.colors.success,
+            value: ratingValue,
+            iconSize: isMobile ? 17 : 20,
+          },
+          {
+            label: "Balance",
+            icon: "cash-outline",
+            iconColor: theme.colors.success,
+            value: formatMoney(moneyBalanceCents),
+            iconSize: statIconSize,
+          },
+        ]
+      : []),
+    {
+      label: "Stars",
+      icon: "star",
+      iconColor: theme.colors.warning,
+      value: String(starsBalance || 0),
+      iconSize: statIconSize,
+    },
+    {
+      label: "Gigs",
+      icon: "briefcase-outline",
+      iconColor: theme.colors.strongSurfaceText,
+      value: String(gigCount || 0),
+      iconSize: statIconSize,
+    },
+  ];
 
   return (
     <Card
@@ -65,92 +107,112 @@ export function UserSummaryCard({
           borderColor: theme.colors.strongSurface,
           borderRadius: theme.radii.lg,
           padding: cardPadding,
+          paddingBottom: cardPadding,
           marginBottom: theme.spacing.lg,
         },
         style,
       ]}
     >
       <View style={{ flexDirection: "row", alignItems: "stretch" }}>
-        <View style={{ flex: 1, justifyContent: "space-between", minHeight: isMobile ? 112 : 128 }}>
-          <View>
-            <Text
-              style={{
-                color: theme.colors.strongSurfaceText,
-                fontSize: nameSize,
-                lineHeight: nameLineHeight,
-                fontWeight: "800",
-              }}
-              numberOfLines={1}
-            >
-              {name || "Profile"}
-            </Text>
-            <Text
-              style={{
-                color: theme.colors.success,
-                fontSize: usernameSize,
-                lineHeight: usernameLineHeight,
-                fontWeight: "700",
-              }}
-              numberOfLines={1}
-            >
-              @{username || "username"}
-            </Text>
-          </View>
-          {tier ? (
-            <View
-              style={{
-                alignSelf: "flex-start",
-                borderRadius: theme.radii.sm,
-                backgroundColor: tierBubbleColor,
-                paddingHorizontal: tierPaddingX,
-                paddingVertical: tierPaddingY,
-              }}
-            >
-              <Text style={{ color: theme.colors.strongSurfaceText, fontSize: tierFontSize, fontWeight: "700" }}>
-                {tier}
+        <View style={{ flex: 1, height: columnHeight, position: "relative" }}>
+          <View style={{ flexDirection: "row", alignItems: "flex-start" }}>
+            <View style={{ marginRight: isMobile ? 10 : 14, justifyContent: "flex-start" }}>
+              {avatarUrl ? (
+                <Image
+                  source={{ uri: avatarUrl }}
+                  style={{
+                    width: avatarSize,
+                    height: avatarSize,
+                    borderRadius: avatarSize / 2,
+                    borderWidth: 1,
+                    borderColor: theme.colors.border,
+                  }}
+                />
+              ) : (
+                <View
+                  style={{
+                    width: avatarSize,
+                    height: avatarSize,
+                    borderRadius: avatarSize / 2,
+                    borderWidth: 1,
+                    borderColor: theme.colors.border,
+                    backgroundColor: theme.colors.surfaceAlt,
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  <Ionicons name="person" size={isMobile ? 24 : 30} color={theme.colors.textMuted} />
+                </View>
+              )}
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text
+                style={{
+                  color: theme.colors.strongSurfaceText,
+                  fontSize: nameSize,
+                  lineHeight: nameLineHeight,
+                  fontWeight: "800",
+                }}
+                numberOfLines={1}
+              >
+                {name || "Profile"}
+              </Text>
+              <Text
+                style={{
+                  color: theme.colors.success,
+                  fontSize: usernameSize,
+                  lineHeight: usernameLineHeight,
+                  fontWeight: "700",
+                }}
+                numberOfLines={1}
+              >
+                @{username || "username"}
               </Text>
             </View>
-          ) : null}
+          </View>
         </View>
 
-        <View style={{ alignItems: "flex-end", justifyContent: starsOnly ? "flex-start" : "space-between", marginLeft: 8, minHeight: isMobile ? 112 : 128 }}>
-          {!starsOnly ? (
-            <View style={{ marginBottom: statGap, alignItems: "flex-end" }}>
-              <Text style={{ color: theme.colors.textMuted, fontSize: statLabelSize, fontWeight: "600" }}>Rating</Text>
-              <View style={{ flexDirection: "row", alignItems: "center" }}>
-                <Ionicons name="star" size={isMobile ? 17 : 20} color={theme.colors.success} style={{ marginRight: 6 }} />
-                <Text style={{ color: theme.colors.strongSurfaceText, fontSize: statValueSize, fontWeight: "800" }}>
-                  {ratingValue}
-                </Text>
-              </View>
-            </View>
-          ) : null}
-
-          {!starsOnly ? (
-            <View style={{ alignItems: "flex-end", marginBottom: moneyBalanceCents == null ? 0 : statGap }}>
+        <View
+          style={{
+            alignItems: "flex-end",
+            justifyContent: "space-between",
+            marginLeft: 8,
+            height: columnHeight,
+          }}
+        >
+          {rightStats.map((stat) => (
+            <View key={stat.label} style={{ alignItems: "flex-end" }}>
               <Text style={{ color: theme.colors.textMuted, fontSize: statLabelSize, fontWeight: "600" }}>
-                Balance
+                {stat.label}
               </Text>
               <View style={{ flexDirection: "row", alignItems: "center" }}>
-                <Ionicons name="cash-outline" size={statIconSize} color={theme.colors.success} style={{ marginRight: 6 }} />
+                <Ionicons name={stat.icon} size={stat.iconSize} color={stat.iconColor} style={{ marginRight: 6 }} />
                 <Text style={{ color: theme.colors.strongSurfaceText, fontSize: statValueSize, fontWeight: "800" }}>
-                  {formatMoney(moneyBalanceCents)}
+                  {stat.value}
                 </Text>
               </View>
             </View>
-          ) : null}
-
-          <View style={{ alignItems: "flex-end", marginTop: starsOnly ? 4 : 0 }}>
-            <Text style={{ color: theme.colors.textMuted, fontSize: statLabelSize, fontWeight: "600" }}>Stars</Text>
-            <View style={{ flexDirection: "row", alignItems: "center" }}>
-              <Ionicons name="star" size={statIconSize} color={theme.colors.warning} style={{ marginRight: 6 }} />
-              <Text style={{ color: theme.colors.strongSurfaceText, fontSize: statValueSize, fontWeight: "800" }}>
-                {starsBalance || 0}
-              </Text>
-            </View>
-          </View>
+          ))}
         </View>
       </View>
+
+      {tier ? (
+        <View
+          style={{
+            position: "absolute",
+            left: cardPadding,
+            bottom: cardPadding,
+            borderRadius: theme.radii.sm,
+            backgroundColor: tierBubbleColor,
+            paddingHorizontal: tierPaddingX,
+            paddingVertical: tierPaddingY,
+          }}
+        >
+          <Text style={{ color: theme.colors.strongSurfaceText, fontSize: tierFontSize, fontWeight: "700" }}>
+            {tier}
+          </Text>
+        </View>
+      ) : null}
     </Card>
   );
 }

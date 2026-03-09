@@ -49,3 +49,28 @@ export const UPDATE_ASSIGNMENT_STATUS_MUTATION = gql`
   }
   ${ASSIGNMENT_SUMMARY_FRAGMENT}
 `;
+
+export const CREATE_IMAGE_UPLOAD_URL_MUTATION = gql`
+  mutation CreateImageUploadUrl(
+    $bucket: S3UploadBucket!
+    $mimeType: String!
+    $size: Int!
+    $folder: String
+  ) {
+    createImageUploadUrl(
+      bucket: $bucket
+      mimeType: $mimeType
+      size: $size
+      folder: $folder
+    ) {
+      uploadUrl
+      fileUrl
+      bucket
+      key
+      mimeType
+      size
+      uploadedByUserId
+      expiresIn
+    }
+  }
+`;

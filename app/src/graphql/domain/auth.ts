@@ -19,6 +19,9 @@ export const ME_QUERY = gql`
       companies {
         ...MemberSummary
       }
+      assignments {
+        id
+      }
     }
   }
   ${PROFILE_SUMMARY_FRAGMENT}
@@ -39,6 +42,9 @@ export const LOGIN_MUTATION = gql`
         }
         companies {
           ...MemberSummary
+        }
+        assignments {
+          id
         }
       }
     }
@@ -61,6 +67,9 @@ export const REGISTER_MUTATION = gql`
         }
         companies {
           ...MemberSummary
+        }
+        assignments {
+          id
         }
       }
     }
